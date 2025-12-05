@@ -1,0 +1,207 @@
+using SpecialFunctions
+
+"""
+Computes Dirichlet Entropy where alpha is a Dictionary of {Label => Count}.
+Missing keys are assumed to have 0 mass (or handled via beta in construction).
+"""
+function bayes_entropy(alpha::Dict{Int, Float64})
+    # alpha_0 is the sum of all pseudo-counts in the dictionary
+    a0 = sum(values(alpha))
+    
+    # Term 1: digamma(sum + 1)
+    term1 = digamma(a0 + 1)
+    
+    # Term 2: sum (alpha_i / alpha_0) * digamma(alpha_i + 1)
+    term2 = 0.0
+    for val in values(alpha)
+        term2 += (val / a0) * digamma(val + 1)
+    end
+    
+    return term1 - term2
+end
+
+"""
+    bayes_entropy_variance(alpha)
+
+Computes the variance of the entropy estimator for a Dirichlet distribution.
+Input `alpha` can be a Vector{Float64} or a Dict{Int, Float64}.
+Ref: Wolpert & Wolf (1995), Eq. 44.
+"""
+function bayes_entropy_variance(alpha::Union{Vector{Float64}, Dict{Int, Float64}})
+    # 1. Calculate sum (alpha_0)
+    # If it's a Dict, we only sum the existing values (assuming the 'beta' 
+    # for missing keys is handled externally or negligible for the variance sum).
+    # Typically for variance, we only care about the active categories.
+    if isa(alpha, Dict)
+        vals = values(alpha)
+        alpha_0 = sum(vals)
+    else
+        vals = alpha
+        alpha_0 = sum(vals)
+    end
+    
+    # Safety check for empty or zero-sum cases
+    if alpha_0 <= 0
+        return 0.0
+    end
+
+    # Pre-compute common terms
+    psi1_a0_plus_1 = trigamma(alpha_0 + 1)
+    denom = (alpha_0^2) * (alpha_0 + 1)
+    
+    variance = 0.0
+    
+    for a_i in vals
+        if a_i > 0
+            # Term A: The variance of probability p_i
+            var_pi = (a_i * (alpha_0 - a_i)) / denom
+            
+            # Term B: The trigamma difference
+            trigamma_diff = trigamma(a_i + 1) - psi1_a0_plus_1
+            
+            variance += var_pi * trigamma_diff
+        end
+    end
+    
+    return variance
+end
+
+
+
+function kl_div(post::Dict{Int, Float64}, prior::Dict{Int, Float64}, beta::Float64)
+    # 1. The Universe of Discourse: Union of all categories
+    # We must evaluate both distributions on exactly the same set of keys.
+    all_keys = union(keys(post), keys(prior))
+    
+    # 2. Calculate Normalization Constants (Alpha_0, Beta_0)
+    # CRITICAL: We sum over 'all_keys'.
+    # If a key is missing in 'prior', its contribution to the sum is 'beta'.
+    # If we simply used sum(values(prior)), we would underestimate the mass 
+    # of the "unseen" new category that appears in posterior.
+    
+    alpha_0 = 0.0
+    beta_0 = 0.0
+    
+    for k in all_keys
+        alpha_0 += get(post, k, beta)
+        beta_0  += get(prior, k, beta)
+    end
+    
+    # 3. Term 1: Log Gamma of the sums
+    t1 = lgamma(alpha_0) - lgamma(beta_0)
+    
+    # 4. Terms 2 & 3: Summation over categories
+    t2 = 0.0
+    t3 = 0.0
+    
+    dg_alpha_0 = digamma(alpha_0)
+    
+    for k in all_keys
+        # Get parameters (filling beta if missing)
+        a_k = get(post, k, beta)
+        b_k = get(prior, k, beta)
+        
+        # Term 2: - log(Beta(alpha)) + log(Beta(beta)) part simplified
+        t2 += lgamma(b_k) - lgamma(a_k)
+        
+        # Term 3: The expectation term
+        # (alpha_k - beta_k) * (digamma(alpha_k) - digamma(alpha_0))
+        t3 += (a_k - b_k) * (digamma(a_k) - dg_alpha_0)
+    end
+    
+    return t1 + t2 + t3
+end
+
+mutable struct LocalBoxObserver
+    # Physical boundaries [x_min, x_max], [y_min, y_max]
+    physical_bounds::Tuple{Tuple{Float64, Float64}, Tuple{Float64, Float64}}
+    # Dictionary of Dirichlet parameters: Label => Weight
+    alpha::Dict{Int, Float64} 
+    last_entropy::Float64
+    last_kl::Float64
+end
+
+function create_observer(phys_bounds, beta::Float64)
+    # Initialize with empty dictionary (conceptual mass is beta everywhere)
+    return LocalBoxObserver(
+        phys_bounds, 
+        Dict{Int, Float64}(), 
+        0.0,
+        0.0
+    )
+end
+
+"""
+Updates the priors of an observer based on a dense initialization (the initial basins).
+"""
+function initialize_prior_from_data!(obs::LocalBoxObserver, data_view::AbstractArray, beta::Float64)
+    # Clear current
+    empty!(obs.alpha)
+    
+    # Count occurrences in the dense data view
+    counts = Dict{Int, Int}()
+    for val in data_view
+        counts[val] = get(counts, val, 0) + 1
+    end
+    
+    # Convert to alpha = count + beta
+    for (k, c) in counts
+        obs.alpha[k] = c + beta
+    end
+    
+    # Initialize stats
+    obs.last_entropy = bayes_entropy(obs.alpha)
+end
+
+function initialize_prior_from_data!(obs::LocalBoxObserver, mapper, beta::Float64, N::Int64)
+    # Clear current
+    empty!(obs.alpha)
+    
+    new_counts = Dict{Int, Int}()
+    for _ in 1:N
+        u0 = pick_random_point(obs)
+        label = mapper(u0) 
+        new_counts[label] = get(new_counts, label, 0) + 1
+    end
+    
+    # Convert to alpha = count + beta
+    for (k, c) in new_counts
+        obs.alpha[k] = c + beta
+    end
+    
+end
+
+"""
+Pick a random physical point (x,y) inside the observer's box.
+"""
+function pick_random_point(obs::LocalBoxObserver)
+    (xmin, xmax) = obs.physical_bounds[1]
+    (ymin, ymax) = obs.physical_bounds[2]
+    
+    x = xmin + rand() * (xmax - xmin)
+    y = ymin + rand() * (ymax - ymin)
+    return [x, y]
+end
+
+function generate_tiling(global_bounds, n_tiles, beta)
+    (gx_min, gx_max), (gy_min, gy_max) = global_bounds
+    dx = (gx_max - gx_min) / n_tiles
+    dy = (gy_max - gy_min) / n_tiles
+    
+    observers = Vector{Any}() # Replace Any with your Struct Type if defined explicitly
+    
+    for i in 1:n_tiles
+        for j in 1:n_tiles
+            # Calculate local bounds
+            loc_xmin = gx_min + (i-1)*dx
+            loc_xmax = gx_min + i*dx
+            loc_ymin = gy_min + (j-1)*dy
+            loc_ymax = gy_min + j*dy
+            
+            # Create observer for this tile
+            obs = create_observer(((loc_xmin, loc_xmax), (loc_ymin, loc_ymax)), beta)
+            push!(observers, obs)
+        end
+    end
+    return observers
+end
