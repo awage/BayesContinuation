@@ -1,9 +1,4 @@
-using DrWatson
-@quickactivate
-using Attractors
 using StaticArrays
-using Random
-using JLD2
 
 
 function henon_rule(u, p, n) # here `n` is "time", but we don't use it.
@@ -150,7 +145,7 @@ function get_mapper(a, b, grid_rec, atts = nothing; consecutive_recurrences = 50
     if !isnothing(atts) && !isempty(atts)
         seed_mapper!(mapper, atts)
         mtch = MatchBySSSetDistance(; distance = Hausdorff(), threshold = Inf, use_vanished = false)
-        rmap = matching_map!(mapper.bsn_nfo.attractors, atts, mtch)
+        rmap = matching_map!(mapper.bsn_nfo.BoA.attractors, atts, mtch)
     end
     return mapper
 end
