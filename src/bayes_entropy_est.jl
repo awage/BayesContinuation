@@ -10,25 +10,27 @@ using ProgressMeter
 include(srcdir("compute.jl"))
 include(srcdir("inference_stuff.jl"))
 
-function estimate_entropy(params, a_range, get_mapper::Function) 
+function estimate_entropy(params, a_range, get_mapper::Function)
 
     @unpack SPARSE_N, DENSE_N, KL_THRESHOLD, N_TILES, GLOBAL_BOUNDS, LAMBDA = params
+    beta = get(params, :BETA, 0.5)
 
     println("Initializing $(N_TILES)x$(N_TILES) observer grid...")
-    observers = generate_tiling(GLOBAL_BOUNDS, N_TILES, BETA)
+    observers = generate_tiling(GLOBAL_BOUNDS, N_TILES, beta)
 
     history_mean_S = Float64[]
     history_var_S = Float64[]
     history_max_KL = Float64[]
-    full_history_S = zeros(Float64, al, length(observers))
-    full_history_KL = zeros(Float64, al, length(observers))
-    mapper = get_map(a_range[1], nothing) 
+    n_steps = length(a_range)
+    full_history_S = zeros(Float64, n_steps, length(observers))
+    full_history_KL = zeros(Float64, n_steps, length(observers))
+    mapper = get_mapper(a_range[1], nothing)
 
     step_entropies = Float64[]
     step_variances = Float64[]
     # Initialize Priors for ALL boxes and initialize the first frame
     for (i, obs) in enumerate(observers)
-        initialize_prior_from_data!(obs, mapper, BETA, DENSE_N)
+        initialize_prior_from_data!(obs, mapper, beta, DENSE_N)
         obs.last_entropy = bayes_entropy(obs.alpha)
         push!(step_entropies, obs.last_entropy)
         full_history_S[1,i] = obs.last_entropy
@@ -43,7 +45,7 @@ function estimate_entropy(params, a_range, get_mapper::Function)
     # collect found attractors for the continuity match
     # (and bifurcation diagram if needed)
     atts = extract_attractors(mapper)
-    history_att = Array{typeof(atts)}(undef, al)
+    history_att = Array{typeof(atts)}(undef, n_steps)
     history_att[1] = atts
 
 
@@ -52,7 +54,7 @@ function estimate_entropy(params, a_range, get_mapper::Function)
         if t_idx == 1 ; continue; end
         
         # Update System Dynamics and do the attractor seed and match
-        mapper = get_map(a_val, history_att[t_idx-1]) 
+        mapper = get_mapper(a_val, history_att[t_idx-1])
 
         step_entropies = Float64[]
         step_variances = Float64[]
@@ -64,7 +66,7 @@ function estimate_entropy(params, a_range, get_mapper::Function)
             # 1. Decay Prior
             prior_alpha = Dict{Int, Float64}()
             for (k, v) in obs.alpha
-                decayed_val = LAMBDA * (v - BETA) + BETA
+                decayed_val = LAMBDA * (v - beta) + beta
                 prior_alpha[k] = decayed_val
             end
 
@@ -79,17 +81,17 @@ function estimate_entropy(params, a_range, get_mapper::Function)
             # 3. Posterior Update
             post_alpha = copy(prior_alpha)
             for (label, count) in new_counts
-                current_val = get(post_alpha, label, BETA)
+                current_val = get(post_alpha, label, beta)
                 post_alpha[label] = current_val + count
             end
 
             # 4. Compute Metrics
             S_curr = bayes_entropy(post_alpha)
-            KL_curr = kl_div(post_alpha, prior_alpha, BETA)
+            KL_curr = kl_div(post_alpha, prior_alpha, beta)
 
             # 5. Check for Phase Transition (Panic Mode)
             if KL_curr > KL_THRESHOLD
-                initialize_prior_from_data!(obs, mapper, BETA, DENSE_N)
+                initialize_prior_from_data!(obs, mapper, beta, DENSE_N)
                 obs.last_entropy = bayes_entropy(obs.alpha)
                 obs.last_kl = KL_curr 
             else 
@@ -121,4 +123,3 @@ function estimate_entropy(params, a_range, get_mapper::Function)
     return history_mean_S, history_var_S, history_max_KL, history_att, full_history_S
 
 end 
-
