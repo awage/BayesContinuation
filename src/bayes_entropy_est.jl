@@ -12,7 +12,7 @@ include(srcdir("inference_stuff.jl"))
 
 function estimate_entropy(params, a_range, get_mapper::Function)
 
-    @unpack SPARSE_N, DENSE_N, KL_THRESHOLD, N_TILES, GLOBAL_BOUNDS, LAMBDA = params
+    @unpack SPARSE_N, DENSE_N, BAYES_FACTOR, N_TILES, GLOBAL_BOUNDS, LAMBDA = params
     beta = get(params, :BETA, 0.5)
 
     println("Initializing $(N_TILES)x$(N_TILES) observer grid...")
@@ -20,10 +20,10 @@ function estimate_entropy(params, a_range, get_mapper::Function)
 
     history_mean_S = Float64[]
     history_var_S = Float64[]
-    history_max_KL = Float64[]
+    history_max_score = Float64[]
     n_steps = length(a_range)
     full_history_S = zeros(Float64, n_steps, length(observers))
-    full_history_KL = zeros(Float64, n_steps, length(observers))
+    full_history_score = zeros(Float64, n_steps, length(observers))
     mapper = get_mapper(a_range[1], nothing)
 
     step_entropies = Float64[]
@@ -40,7 +40,7 @@ function estimate_entropy(params, a_range, get_mapper::Function)
     global_entropy_var = sum(step_variances)/(length(observers)^2)
     push!(history_var_S, global_entropy_var)
     push!(history_mean_S, mean(step_entropies))
-    push!(history_max_KL, 0.0)
+    push!(history_max_score, 0.0)
         
     # collect found attractors for the continuity match
     # (and bifurcation diagram if needed)
@@ -58,7 +58,7 @@ function estimate_entropy(params, a_range, get_mapper::Function)
 
         step_entropies = Float64[]
         step_variances = Float64[]
-        step_kls = Float64[]
+        step_score = Float64[]
 
         # Iterate over all boxes
         for (obs_idx, obs) in enumerate(observers)
@@ -87,39 +87,40 @@ function estimate_entropy(params, a_range, get_mapper::Function)
 
             # 4. Compute Metrics
             S_curr = bayes_entropy(post_alpha)
-            KL_curr = kl_div(post_alpha, prior_alpha, beta)
+            # score_curr = score_div(post_alpha, prior_alpha, beta)
+            BAYES_curr = compute_log_bayes_factor(new_counts, prior_alpha, beta)
 
             # 5. Check for Phase Transition (Panic Mode)
-            if KL_curr > KL_THRESHOLD
+            if BAYES_curr > BAYES_FACTOR
                 initialize_prior_from_data!(obs, mapper, beta, DENSE_N)
                 obs.last_entropy = bayes_entropy(obs.alpha)
-                obs.last_kl = KL_curr 
+                obs.last_score = BAYES_curr 
             else 
                 # Normal update
                 obs.alpha = post_alpha
                 obs.last_entropy = S_curr
-                obs.last_kl = KL_curr
+                obs.last_score = BAYES_curr
             end
             
             var_k = bayes_entropy_variance(post_alpha)
 
             push!(step_variances, var_k)
             push!(step_entropies, obs.last_entropy)
-            push!(step_kls, obs.last_kl)
+            push!(step_score, obs.last_score)
             
             # Store for full history
             full_history_S[t_idx, obs_idx] = obs.last_entropy
-            full_history_KL[t_idx, obs_idx] = obs.last_kl
+            full_history_score[t_idx, obs_idx] = obs.last_score
         end
         
         # collect found attractors for the continuity match
         history_att[t_idx]  = extract_attractors(mapper)
         global_entropy_var = sum(step_variances)/(length(observers)^2)
         push!(history_mean_S, mean(step_entropies))
-        push!(history_max_KL, maximum(step_kls))
+        push!(history_max_score, maximum(step_score))
         push!(history_var_S, global_entropy_var)
     end
 
-    return history_mean_S, history_var_S, history_max_KL, history_att, full_history_S
+    return history_mean_S, history_var_S, history_max_score, history_att, full_history_S
 
 end 

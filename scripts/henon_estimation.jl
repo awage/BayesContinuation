@@ -13,7 +13,7 @@ BETA = 0.5
 LAMBDA = 0.7       # Forgetting factor
 SPARSE_N = 20      # Routine monitoring samples
 DENSE_N = SPARSE_N^2     # Panic mode samples (re-learning)
-KL_THRESHOLD = 0.7 # Threshold to trigger Panic Mode
+BAYES_FACTOR = 5 # Threshold to trigger Panic Mode
 
 # Tiling Configuration
 N_TILES = 20 
@@ -31,7 +31,7 @@ yg_rec = range(-4, 4, length = 1000)
 grid_rec = (xg_rec, yg_rec)
 
 
-params = @strdict SPARSE_N DENSE_N KL_THRESHOLD N_TILES GLOBAL_BOUNDS LAMBDA
+params = @strdict SPARSE_N DENSE_N BAYES_FACTOR N_TILES GLOBAL_BOUNDS LAMBDA
 get_map(a, atts)  = get_mapper(a, b, grid_rec, atts)
 
 # Do the estimation 
@@ -55,7 +55,7 @@ band!(ax1, a_range, lower_band, upper_band,
 # Max KL Divergence (The Detector)
 ax2 = Axis(fig[2, 1], title = "Max Spatial Surprise (KL)", ylabel = "KL")
 lines!(ax2, a_range, history_max_KL, color = :red)
-hlines!(ax2, [KL_THRESHOLD], color = :gray, linestyle = :dash, label="Panic Threshold")
+hlines!(ax2, [BAYES_FACTOR], color = :gray, linestyle = :dash, label="Panic Threshold")
 xlims!(ax2, ai, af)
 
 # Visualizing how entropy evolves in the boxes over time (flattened)

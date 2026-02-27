@@ -118,7 +118,7 @@ mutable struct LocalBoxObserver
     # Dictionary of Dirichlet parameters: Label => Weight
     alpha::Dict{Int, Float64} 
     last_entropy::Float64
-    last_kl::Float64
+    last_score::Float64
 end
 
 function create_observer(phys_bounds, beta::Float64)
@@ -204,4 +204,56 @@ function generate_tiling(global_bounds, n_tiles, beta)
         end
     end
     return observers
+end
+
+"""
+Computes the Log Marginal Likelihood of observing 'new_counts' given the prior 'alpha'.
+This is the "predictive score" of the model.
+"""
+function log_marginal_likelihood(new_counts::Dict{Int, Int}, alpha::Dict{Int, Float64}, beta::Float64)
+    # 1. Identify all relevant categories (union of prior and new data)
+    all_keys = union(keys(new_counts), keys(alpha))
+    
+    # 2. Calculate sums
+    sum_alpha = 0.0
+    sum_counts = 0
+    for k in all_keys
+        sum_alpha += get(alpha, k, beta)
+        sum_counts += get(new_counts, k, 0)
+    end
+    
+    # 3. Leading Gamma terms: logGamma(sum_alpha) - logGamma(sum_alpha + N)
+    lml = lgamma(sum_alpha) - lgamma(sum_alpha + sum_counts)
+    
+    # 4. Product terms: sum [ logGamma(c_i + a_i) - logGamma(a_i) ]
+    for k in all_keys
+        a_i = get(alpha, k, beta)
+        c_i = get(new_counts, k, 0)
+        lml += lgamma(a_i + c_i) - lgamma(a_i)
+    end
+    
+    return lml
+end
+
+"""
+Computes the Log Bayes Factor comparing:
+H1: Data comes from a "Flat/Unknown" distribution (params = flat_beta)
+H0: Data comes from the current "Historical" prior (params = alpha)
+
+Interpretation:
+- LBF > 2.3: Moderate evidence of change (~10x more likely)
+- LBF > 4.6: Strong evidence of change (~100x more likely)
+"""
+function compute_log_bayes_factor(new_counts::Dict{Int, Int}, alpha::Dict{Int, Float64}, beta::Float64, flat_beta::Float64=1.0)
+    # Log Marginal Likelihood under the established prior
+    lml_h0 = log_marginal_likelihood(new_counts, alpha, beta)
+    
+    # Log Marginal Likelihood under a "Flat" (uninformative) prior
+    # We create a dummy flat prior for the same keys
+    flat_prior = Dict{Int, Float64}() # Empty dict + flat_beta handles the math
+    lml_h1 = log_marginal_likelihood(new_counts, flat_prior, flat_beta)
+    
+    # Bayes Factor = P(Data|H1) / P(Data|H0)
+    # In Log space: LogBF = LogL(H1) - LogL(H0)
+    return lml_h1 - lml_h0
 end
