@@ -188,7 +188,7 @@ function generate_tiling(global_bounds, n_tiles, beta)
     dx = (gx_max - gx_min) / n_tiles
     dy = (gy_max - gy_min) / n_tiles
     
-    observers = Vector{Any}() # Replace Any with your Struct Type if defined explicitly
+    observers = Vector{LocalBoxObserver}()
     
     for i in 1:n_tiles
         for j in 1:n_tiles

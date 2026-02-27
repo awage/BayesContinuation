@@ -32,12 +32,12 @@ end
 
     SPARSE_N = 50
     DENSE_N = 500
-    KL_THRESHOLD = 10.0
+    BAYES_FACTOR = 10.0
     N_TILES = 10
     GLOBAL_BOUNDS = ((-1.0, 1.0), (-1.0, 1.0))
     LAMBDA = 1.0
     BETA = 0.5
-    params = @strdict SPARSE_N DENSE_N KL_THRESHOLD N_TILES GLOBAL_BOUNDS LAMBDA BETA
+    params = @strdict SPARSE_N DENSE_N BAYES_FACTOR N_TILES GLOBAL_BOUNDS LAMBDA BETA
 
     a_range = range(-0.8, 0.8, length = 6)
 

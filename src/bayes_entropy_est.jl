@@ -15,8 +15,15 @@ function estimate_entropy(params, a_range, get_mapper::Function)
     @unpack SPARSE_N, DENSE_N, BAYES_FACTOR, N_TILES, GLOBAL_BOUNDS, LAMBDA = params
     beta = get(params, :BETA, 0.5)
 
-    println("Initializing $(N_TILES)x$(N_TILES) observer grid...")
-    observers = generate_tiling(GLOBAL_BOUNDS, N_TILES, beta)
+    sparse_n = SPARSE_N
+    dense_n = DENSE_N
+    bayes_factor = BAYES_FACTOR
+    n_tiles = N_TILES
+    global_bounds = GLOBAL_BOUNDS
+    lambda = LAMBDA
+
+    println("Initializing $(n_tiles)x$(n_tiles) observer grid...")
+    observers = generate_tiling(global_bounds, n_tiles, beta)
 
     history_mean_S = Float64[]
     history_var_S = Float64[]
@@ -30,7 +37,7 @@ function estimate_entropy(params, a_range, get_mapper::Function)
     step_variances = Float64[]
     # Initialize Priors for ALL boxes and initialize the first frame
     for (i, obs) in enumerate(observers)
-        initialize_prior_from_data!(obs, mapper, beta, DENSE_N)
+        initialize_prior_from_data!(obs, mapper, beta, dense_n)
         obs.last_entropy = bayes_entropy(obs.alpha)
         push!(step_entropies, obs.last_entropy)
         full_history_S[1,i] = obs.last_entropy
@@ -51,7 +58,7 @@ function estimate_entropy(params, a_range, get_mapper::Function)
 
 
     @showprogress for (t_idx, a_val) in enumerate(a_range)
-        if t_idx == 1 ; continue; end
+        if t_idx == 1; continue; end
         
         # Update System Dynamics and do the attractor seed and match
         mapper = get_mapper(a_val, history_att[t_idx-1])
@@ -66,13 +73,13 @@ function estimate_entropy(params, a_range, get_mapper::Function)
             # 1. Decay Prior
             prior_alpha = Dict{Int, Float64}()
             for (k, v) in obs.alpha
-                decayed_val = LAMBDA * (v - beta) + beta
+                decayed_val = lambda * (v - beta) + beta
                 prior_alpha[k] = decayed_val
             end
 
             # 2. Sparse Sampling
             new_counts = Dict{Int, Int}()
-            for _ in 1:SPARSE_N
+            for _ in 1:sparse_n
                 u0 = pick_random_point(obs)
                 label = mapper(u0) 
                 new_counts[label] = get(new_counts, label, 0) + 1
@@ -86,20 +93,20 @@ function estimate_entropy(params, a_range, get_mapper::Function)
             end
 
             # 4. Compute Metrics
-            S_curr = bayes_entropy(post_alpha)
+            entropy_curr = bayes_entropy(post_alpha)
             # score_curr = score_div(post_alpha, prior_alpha, beta)
-            BAYES_curr = compute_log_bayes_factor(new_counts, prior_alpha, beta)
+            log_bayes_factor = compute_log_bayes_factor(new_counts, prior_alpha, beta)
 
             # 5. Check for Phase Transition (Panic Mode)
-            if BAYES_curr > BAYES_FACTOR
-                initialize_prior_from_data!(obs, mapper, beta, DENSE_N)
+            if log_bayes_factor > bayes_factor
+                initialize_prior_from_data!(obs, mapper, beta, dense_n)
                 obs.last_entropy = bayes_entropy(obs.alpha)
-                obs.last_score = BAYES_curr 
+                obs.last_score = log_bayes_factor 
             else 
                 # Normal update
                 obs.alpha = post_alpha
-                obs.last_entropy = S_curr
-                obs.last_score = BAYES_curr
+                obs.last_entropy = entropy_curr
+                obs.last_score = log_bayes_factor
             end
             
             var_k = bayes_entropy_variance(post_alpha)
