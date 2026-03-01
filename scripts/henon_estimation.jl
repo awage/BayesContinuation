@@ -9,14 +9,32 @@ using ProgressMeter
 
 include(srcdir("bayes_entropy_est.jl"))
 
+function henon_bayes_continuation(d)
+
+    @unpack a_range, b, SPARSE_N, DENSE_N, BAYES_FACTOR, N_TILES, GLOBAL_BOUNDS, LAMBDA = d
+
+    a = 1.0
+    # For recurrence finding
+    xg_rec = range(-4, 4, length = 1000)
+    yg_rec = range(-4, 4, length = 1000)
+    grid_rec = (xg_rec, yg_rec)
+
+    get_map(a, atts)  = get_mapper(a, b, grid_rec, atts)
+
+    # Do the estimation 
+    history_mean_S, history_var_S, history_max_score, history_att, full_history_S = estimate_entropy(params, a_range, get_map) 
+
+    return @strdict(history_mean_S, history_var_S, history_max_score, history_att, full_history_S)
+end
+
 BETA = 0.5
 LAMBDA = 0.7       # Forgetting factor
-SPARSE_N = 20      # Routine monitoring samples
+SPARSE_N = 10      # Routine monitoring samples
 DENSE_N = SPARSE_N^2     # Panic mode samples (re-learning)
 BAYES_FACTOR = 5 # Threshold to trigger Panic Mode
 
 # Tiling Configuration
-N_TILES = 20 
+N_TILES = 5 
 GLOBAL_BOUNDS = ((-2.0, 2.0), (-2.0, 2.0))
 
 # Parameters
@@ -25,17 +43,18 @@ b = -0.3;
 al = 200 # Steps
 a_range = range(ai, af, length = al)
 
-# For recurrence finding
-xg_rec = range(-4, 4, length = 1000)
-yg_rec = range(-4, 4, length = 1000)
-grid_rec = (xg_rec, yg_rec)
 
+params = @strdict a_range b SPARSE_N DENSE_N BAYES_FACTOR N_TILES GLOBAL_BOUNDS LAMBDA
 
-params = @strdict SPARSE_N DENSE_N BAYES_FACTOR N_TILES GLOBAL_BOUNDS LAMBDA
-get_map(a, atts)  = get_mapper(a, b, grid_rec, atts)
+data, file = produce_or_load(
+    datadir("data"), 
+    params, 
+    henon_bayes_continuation;
+    prefix = "henon_bayes", storepatch = false,
+    suffix = "jld2", force = false
+)
 
-# Do the estimation 
-history_mean_S, history_var_S, history_max_KL, history_att, full_history_S = estimate_entropy(params, a_range, get_map) 
+@unpack history_mean_S, history_var_S, history_max_score, history_att, full_history_S = data
 
 # PLOTTING
 fig = Figure(resolution = (800, 800))
@@ -53,8 +72,8 @@ band!(ax1, a_range, lower_band, upper_band,
     )
 
 # Max KL Divergence (The Detector)
-ax2 = Axis(fig[2, 1], title = "Max Spatial Surprise (KL)", ylabel = "KL")
-lines!(ax2, a_range, history_max_KL, color = :red)
+ax2 = Axis(fig[2, 1], title = "Max Bayes Score (B_10)", ylabel = "Score")
+lines!(ax2, a_range, history_max_score, color = :red)
 hlines!(ax2, [BAYES_FACTOR], color = :gray, linestyle = :dash, label="Panic Threshold")
 xlims!(ax2, ai, af)
 

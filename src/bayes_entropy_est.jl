@@ -62,7 +62,6 @@ function estimate_entropy(params, a_range, get_mapper::Function)
         
         # Update System Dynamics and do the attractor seed and match
         mapper = get_mapper(a_val, history_att[t_idx-1])
-
         step_entropies = Float64[]
         step_variances = Float64[]
         step_score = Float64[]

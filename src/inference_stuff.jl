@@ -27,46 +27,105 @@ Computes the variance of the entropy estimator for a Dirichlet distribution.
 Input `alpha` can be a Vector{Float64} or a Dict{Int, Float64}.
 Ref: Wolpert & Wolf (1995), Eq. 44.
 """
-function bayes_entropy_variance(alpha::Union{Vector{Float64}, Dict{Int, Float64}})
-    # 1. Calculate sum (alpha_0)
-    # If it's a Dict, we only sum the existing values (assuming the 'beta' 
-    # for missing keys is handled externally or negligible for the variance sum).
-    # Typically for variance, we only care about the active categories.
-    if isa(alpha, Dict)
-        vals = values(alpha)
-        alpha_0 = sum(vals)
-    else
-        vals = alpha
-        alpha_0 = sum(vals)
-    end
+# function bayes_entropy_variance(alpha::Union{Vector{Float64}, Dict{Int, Float64}})
+#     # 1. Calculate sum (alpha_0)
+#     # If it's a Dict, we only sum the existing values (assuming the 'beta' 
+#     # for missing keys is handled externally or negligible for the variance sum).
+#     # Typically for variance, we only care about the active categories.
+#     if isa(alpha, Dict)
+#         vals = values(alpha)
+#         alpha_0 = sum(vals)
+#     else
+#         vals = alpha
+#         alpha_0 = sum(vals)
+#     end
     
-    # Safety check for empty or zero-sum cases
-    if alpha_0 <= 0
+#     # Safety check for empty or zero-sum cases
+#     if alpha_0 <= 0
+#         return 0.0
+#     end
+
+#     # Pre-compute common terms
+#     psi1_a0_plus_1 = trigamma(alpha_0 + 1)
+#     denom = (alpha_0^2) * (alpha_0 + 1)
+    
+#     variance = 0.0
+    
+#     for a_i in vals
+#         if a_i > 0
+#             # Term A: The variance of probability p_i
+#             var_pi = (a_i * (alpha_0 - a_i)) / denom
+            
+#             # Term B: The trigamma difference
+#             trigamma_diff = trigamma(a_i + 1) - psi1_a0_plus_1
+            
+#             variance += var_pi * trigamma_diff
+#         end
+#     end
+    
+#     return variance
+# end
+
+
+"""
+    bayes_entropy_variance_exact(alpha)
+
+Computes the EXACT variance of the Shannon entropy for a Dirichlet distribution.
+Ref: Wolpert & Wolf (1995), Theorem 16 (Eq 16.1 and 16.2).
+Uses an O(K) algebraic reduction to avoid K^2 cross-term summations.
+"""
+function bayes_entropy_variance(alpha::Union{Vector{Float64}, Dict{Int, Float64}})
+    vals = isa(alpha, Dict) ? collect(values(alpha)) : alpha
+    a0 = sum(vals)
+    
+    if a0 <= 0
         return 0.0
     end
-
-    # Pre-compute common terms
-    psi1_a0_plus_1 = trigamma(alpha_0 + 1)
-    denom = (alpha_0^2) * (alpha_0 + 1)
     
-    variance = 0.0
+    # Precompute common polygamma terms for the total sum a0
+    psi_a0_1 = digamma(a0 + 1)
+    psi_a0_2 = digamma(a0 + 2)
+    tri_a0_2 = trigamma(a0 + 2)
+    
+    E_S = 0.0      # Expected Entropy: E[S]
+    sum_A = 0.0    # For the O(K) cross-term trick
+    sum_A2 = 0.0   # For the O(K) cross-term trick
+    sum_a_sq = 0.0 # Sum of alpha_i squared
+    D = 0.0        # Diagonal terms
     
     for a_i in vals
         if a_i > 0
-            # Term A: The variance of probability p_i
-            var_pi = (a_i * (alpha_0 - a_i)) / denom
+            # 1. Expectation Term (Eq 16.1)
+            E_S -= (a_i / a0) * (digamma(a_i + 1) - psi_a0_1)
             
-            # Term B: The trigamma difference
-            trigamma_diff = trigamma(a_i + 1) - psi1_a0_plus_1
+            # 2. Cross Term Components (for Eq 16.2 i != j)
+            A_i = a_i * (digamma(a_i + 1) - psi_a0_2)
+            sum_A += A_i
+            sum_A2 += A_i^2
+            sum_a_sq += a_i^2
             
-            variance += var_pi * trigamma_diff
+            # 3. Diagonal Terms (for Eq 16.2 i == j)
+            psi_ai_2 = digamma(a_i + 2)
+            tri_ai_2 = trigamma(a_i + 2)
+            
+            term_D = (a_i * (a_i + 1)) / (a0 * (a0 + 1)) * 
+                     ( (psi_ai_2 - psi_a0_2)^2 + tri_ai_2 - tri_a0_2 )
+            D += term_D
         end
     end
     
-    return variance
+    # Combine the Cross Terms using the (Sum)^2 - Sum(Squares) trick
+    cross_part1 = sum_A^2 - sum_A2
+    cross_part2 = -tri_a0_2 * (a0^2 - sum_a_sq)
+    C = (cross_part1 + cross_part2) / (a0 * (a0 + 1))
+    
+    # Exact Second Moment E[S^2]
+    E_S2 = C + D
+    
+    # Variance = E[S^2] - (E[S])^2
+    # Ensure it doesn't drop trivially below 0 due to float imprecision
+    return max(0.0, E_S2 - E_S^2) 
 end
-
-
 
 function kl_div(post::Dict{Int, Float64}, prior::Dict{Int, Float64}, beta::Float64)
     # 1. The Universe of Discourse: Union of all categories
