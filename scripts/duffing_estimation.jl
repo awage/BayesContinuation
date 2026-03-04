@@ -41,9 +41,9 @@ function duffing_bayes_continuation(params)
 
     get_map(ω, atts) = get_mapper_duffing(d, F, ω, grid_rec, atts)
 
-    history_mean_S, history_var_S, history_max_score, history_att, full_history_S = estimate_entropy(params, ω_range, get_map)
+    history_mean_S, history_var_S, history_max_llr, history_att, full_history_S = estimate_entropy(params, ω_range, get_map)
 
-    return @strdict(history_mean_S, history_var_S, history_max_score, history_att, full_history_S)
+    return @strdict(history_mean_S, history_var_S, history_max_llr, history_att, full_history_S)
 end
 
 
@@ -54,7 +54,7 @@ SPARSE_N = 20
 DENSE_N = SPARSE_N^2
 BAYES_FACTOR = 5.0
 
-N_TILES = 5
+N_TILES = 8
 GLOBAL_BOUNDS = ((-2.0, 2.0), (-2.0, 2.0))
 
 # Duffing parameters
@@ -80,13 +80,13 @@ data, file = produce_or_load(
     suffix = "jld2", force = false
 )
 
-@unpack history_mean_S, history_var_S, history_max_score, history_att, full_history_S = data
+@unpack history_mean_S, history_var_S, history_max_llr, history_att, full_history_S = data
 
 
 
 
 println("Done. Mean entropy range: ", extrema(history_mean_S))
-println("Max log Bayes factor range: ", extrema(history_max_score))
+println("Max LLR range: ", extrema(history_max_llr))
 
 
 # PLOTTING
@@ -105,9 +105,9 @@ band!(ax1, ω_range, lower_band, upper_band,
     )
 
 # Max KL Divergence (The Detector)
-ax2 = Axis(fig[2, 1], title = "Max Spatial Bayes score", ylabel = "B_10")
-lines!(ax2, ω_range, history_max_score, color = :red)
-hlines!(ax2, [BAYES_FACTOR], color = :gray, linestyle = :dash, label="Panic Threshold")
+ax2 = Axis(fig[2, 1], title = "Max Divergence", ylabel = "D_W")
+lines!(ax2, ω_range, history_max_llr, color = :red)
+# hlines!(ax2, [BAYES_FACTOR], color = :gray, linestyle = :dash, label="Panic Threshold")
 xlims!(ax2, ωi, ωf)
 
 # Visualizing how entropy evolves in the boxes over time (flattened)

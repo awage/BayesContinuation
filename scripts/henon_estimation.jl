@@ -22,9 +22,9 @@ function henon_bayes_continuation(d)
     get_map(a, atts)  = get_mapper(a, b, grid_rec, atts)
 
     # Do the estimation 
-    history_mean_S, history_var_S, history_max_score, history_att, full_history_S = estimate_entropy(params, a_range, get_map) 
+    history_mean_S, history_var_S, history_max_llr, history_att, full_history_S = estimate_entropy(params, a_range, get_map) 
 
-    return @strdict(history_mean_S, history_var_S, history_max_score, history_att, full_history_S)
+    return @strdict(history_mean_S, history_var_S, history_max_llr, history_att, full_history_S)
 end
 
 BETA = 0.5
@@ -34,13 +34,13 @@ DENSE_N = SPARSE_N^2     # Panic mode samples (re-learning)
 BAYES_FACTOR = 5 # Threshold to trigger Panic Mode
 
 # Tiling Configuration
-N_TILES = 5 
+N_TILES = 8 
 GLOBAL_BOUNDS = ((-2.0, 2.0), (-2.0, 2.0))
 
 # Parameters
 ai = 1.0; af = 2.0; 
 b = -0.3;  
-al = 200 # Steps
+al = 150 # Steps
 a_range = range(ai, af, length = al)
 
 
@@ -54,7 +54,7 @@ data, file = produce_or_load(
     suffix = "jld2", force = false
 )
 
-@unpack history_mean_S, history_var_S, history_max_score, history_att, full_history_S = data
+@unpack history_mean_S, history_var_S, history_max_llr, history_att, full_history_S = data
 
 # PLOTTING
 fig = Figure(resolution = (800, 800))
@@ -72,9 +72,9 @@ band!(ax1, a_range, lower_band, upper_band,
     )
 
 # Max KL Divergence (The Detector)
-ax2 = Axis(fig[2, 1], title = "Max Bayes Score (B_10)", ylabel = "Score")
-lines!(ax2, a_range, history_max_score, color = :red)
-hlines!(ax2, [BAYES_FACTOR], color = :gray, linestyle = :dash, label="Panic Threshold")
+ax2 = Axis(fig[2, 1], title = "Max Divergence", ylabel = "D_W")
+lines!(ax2, a_range, history_max_llr, color = :red)
+# hlines!(ax2, [BAYES_FACTOR], color = :gray, linestyle = :dash, label="Panic Threshold")
 xlims!(ax2, ai, af)
 
 # Visualizing how entropy evolves in the boxes over time (flattened)
