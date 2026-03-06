@@ -72,7 +72,8 @@ function estimate_entropy(params, a_range, get_mapper::Function)
             # 1. Decay Prior
             prior_alpha = Dict{Int, Float64}()
             for (k, v) in obs.alpha
-                decayed_val = lambda * (v - beta) + beta
+                # decayed_val = lambda * (v - beta) + beta
+                decayed_val = lambda * v 
                 prior_alpha[k] = decayed_val
             end
 

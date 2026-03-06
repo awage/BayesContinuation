@@ -77,7 +77,7 @@ data, file = produce_or_load(
     params, 
     duffing_bayes_continuation;
     prefix = "duffing_bayes", storepatch = false,
-    suffix = "jld2", force = false
+    suffix = "jld2", force = true
 )
 
 @unpack history_mean_S, history_var_S, history_max_llr, history_att, full_history_S = data

@@ -82,50 +82,6 @@ function bayes_entropy_variance(alpha::Union{Vector{Float64}, Dict{Int, Float64}
     return max(0.0, E_S2 - E_S^2) 
 end
 
-function kl_div(post::Dict{Int, Float64}, prior::Dict{Int, Float64}, beta::Float64)
-    # 1. The Universe of Discourse: Union of all categories
-    # We must evaluate both distributions on exactly the same set of keys.
-    all_keys = union(keys(post), keys(prior))
-    
-    # 2. Calculate Normalization Constants (Alpha_0, Beta_0)
-    # CRITICAL: We sum over 'all_keys'.
-    # If a key is missing in 'prior', its contribution to the sum is 'beta'.
-    # If we simply used sum(values(prior)), we would underestimate the mass 
-    # of the "unseen" new category that appears in posterior.
-    
-    alpha_0 = 0.0
-    beta_0 = 0.0
-    
-    for k in all_keys
-        alpha_0 += get(post, k, beta)
-        beta_0  += get(prior, k, beta)
-    end
-    
-    # 3. Term 1: Log Gamma of the sums
-    t1 = lgamma(alpha_0) - lgamma(beta_0)
-    
-    # 4. Terms 2 & 3: Summation over categories
-    t2 = 0.0
-    t3 = 0.0
-    
-    dg_alpha_0 = digamma(alpha_0)
-    
-    for k in all_keys
-        # Get parameters (filling beta if missing)
-        a_k = get(post, k, beta)
-        b_k = get(prior, k, beta)
-        
-        # Term 2: - log(Beta(alpha)) + log(Beta(beta)) part simplified
-        t2 += lgamma(b_k) - lgamma(a_k)
-        
-        # Term 3: The expectation term
-        # (alpha_k - beta_k) * (digamma(alpha_k) - digamma(alpha_0))
-        t3 += (a_k - b_k) * (digamma(a_k) - dg_alpha_0)
-    end
-    
-    return t1 + t2 + t3
-end
-
 mutable struct LocalBoxObserver
     # Physical boundaries [x_min, x_max], [y_min, y_max]
     physical_bounds::Tuple{Tuple{Float64, Float64}, Tuple{Float64, Float64}}
@@ -219,60 +175,6 @@ function generate_tiling(global_bounds, n_tiles, beta)
     end
     return observers
 end
-
-"""
-Computes the Log Marginal Likelihood of observing 'new_counts' given the prior 'alpha'.
-This is the "predictive score" of the model.
-"""
-function log_marginal_likelihood(new_counts::Dict{Int, Int}, alpha::Dict{Int, Float64}, beta::Float64)
-    # 1. Identify all relevant categories (union of prior and new data)
-    all_keys = union(keys(new_counts), keys(alpha))
-    
-    # 2. Calculate sums
-    sum_alpha = 0.0
-    sum_counts = 0
-    for k in all_keys
-        sum_alpha += get(alpha, k, beta)
-        sum_counts += get(new_counts, k, 0)
-    end
-    
-    # 3. Leading Gamma terms: logGamma(sum_alpha) - logGamma(sum_alpha + N)
-    lml = lgamma(sum_alpha) - lgamma(sum_alpha + sum_counts)
-    
-    # 4. Product terms: sum [ logGamma(c_i + a_i) - logGamma(a_i) ]
-    for k in all_keys
-        a_i = get(alpha, k, beta)
-        c_i = get(new_counts, k, 0)
-        lml += lgamma(a_i + c_i) - lgamma(a_i)
-    end
-    
-    return lml
-end
-
-"""
-Computes the Log Bayes Factor comparing:
-H1: Data comes from a "Flat/Unknown" distribution (params = flat_beta)
-H0: Data comes from the current "Historical" prior (params = alpha)
-
-Interpretation:
-- LBF > 2.3: Moderate evidence of change (~10x more likely)
-- LBF > 4.6: Strong evidence of change (~100x more likely)
-"""
-function compute_log_bayes_factor(new_counts::Dict{Int, Int}, alpha::Dict{Int, Float64}, beta::Float64, flat_beta::Float64=1.0)
-    # Log Marginal Likelihood under the established prior
-    lml_h0 = log_marginal_likelihood(new_counts, alpha, beta)
-    
-    # Log Marginal Likelihood under a "Flat" (uninformative) prior
-    # We create a dummy flat prior for the same keys
-    flat_prior = Dict{Int, Float64}() # Empty dict + flat_beta handles the math
-    lml_h1 = log_marginal_likelihood(new_counts, flat_prior, flat_beta)
-    
-    # Bayes Factor = P(Data|H1) / P(Data|H0)
-    # In Log space: LogBF = LogL(H1) - LogL(H0)
-    return lml_h1 - lml_h0
-end
-
-
 
 # ============================================================================
 #  G-statistic detection (replaces Bayes Factor)
