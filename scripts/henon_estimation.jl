@@ -22,9 +22,9 @@ function henon_bayes_continuation(d)
     get_map(a, atts)  = get_mapper(a, b, grid_rec, atts)
 
     # Do the estimation 
-    history_mean_S, history_var_S, history_max_llr, history_att, full_history_S, history_volumes = estimate_entropy(params, a_range, get_map)
+    history_mean_S, history_var_S, history_max_llr, history_n_panics, history_att, full_history_S, history_volumes = estimate_entropy(params, a_range, get_map)
 
-    return @strdict(history_mean_S, history_var_S, history_max_llr, history_att, full_history_S, history_volumes)
+    return @strdict(history_mean_S, history_var_S, history_max_llr, history_n_panics, history_att, full_history_S, history_volumes)
 end
 
 BETA = 0.5
@@ -54,7 +54,7 @@ data, file = produce_or_load(
     suffix = "jld2", force = true
 )
 
-@unpack history_mean_S, history_var_S, history_max_llr, history_att, full_history_S, history_volumes = data
+@unpack history_mean_S, history_var_S, history_max_llr, history_n_panics, history_att, full_history_S, history_volumes = data
 
 # Collect all basin labels that appear across all steps
 all_labels = sort(collect(reduce(union, keys.(history_volumes))))
@@ -75,9 +75,9 @@ band!(ax1, a_range, lower_band, upper_band,
         color = (:black, 0.2),
         label = "Confidence (±3σ)")
 
-# Max G-statistic (The Detector)
-ax2 = Axis(fig[2, 1], title = "Max Divergence", ylabel = "D_W")
-lines!(ax2, a_range, history_max_llr, color = :red)
+# Panic mode count (The Detector)
+ax2 = Axis(fig[2, 1], title = "Panic Tiles per Step", ylabel = "# panics")
+stairs!(ax2, a_range, history_n_panics, color = :red)
 xlims!(ax2, ai, af)
 
 # Basin volumes — stacked band chart

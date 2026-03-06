@@ -41,9 +41,9 @@ function duffing_bayes_continuation(params)
 
     get_map(ω, atts) = get_mapper_duffing(d, F, ω, grid_rec, atts)
 
-    history_mean_S, history_var_S, history_max_llr, history_att, full_history_S, history_volumes = estimate_entropy(params, ω_range, get_map)
+    history_mean_S, history_var_S, history_max_llr, history_n_panics, history_att, full_history_S, history_volumes = estimate_entropy(params, ω_range, get_map)
 
-    return @strdict(history_mean_S, history_var_S, history_max_llr, history_att, full_history_S, history_volumes)
+    return @strdict(history_mean_S, history_var_S, history_max_llr, history_n_panics, history_att, full_history_S, history_volumes)
 end
 
 
@@ -80,7 +80,7 @@ data, file = produce_or_load(
     suffix = "jld2", force = true
 )
 
-@unpack history_mean_S, history_var_S, history_max_llr, history_att, full_history_S, history_volumes = data
+@unpack history_mean_S, history_var_S, history_max_llr, history_n_panics, history_att, full_history_S, history_volumes = data
 
 
 
@@ -110,9 +110,9 @@ band!(ax1, ω_range, lower_band, upper_band,
         color = (:black, 0.2),
         label = "Confidence (±3σ)")
 
-# Max G-statistic (The Detector)
-ax2 = Axis(fig[2, 1], title = "Max Divergence", ylabel = "D_W")
-lines!(ax2, ω_range, history_max_llr, color = :red)
+# Panic mode count (The Detector)
+ax2 = Axis(fig[2, 1], title = "Panic Tiles per Step", ylabel = "# panics")
+stairs!(ax2, ω_range, history_n_panics, color = :red)
 xlims!(ax2, ωi, ωf)
 
 # Basin volumes — stacked band chart

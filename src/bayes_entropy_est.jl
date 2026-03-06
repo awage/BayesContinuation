@@ -28,6 +28,7 @@ function estimate_entropy(params, a_range, get_mapper::Function)
     history_mean_S = Float64[]
     history_var_S = Float64[]
     history_max_llr = Float64[]
+    history_n_panics = Int[]
     history_volumes = Dict{Int, Float64}[]
     n_steps = length(a_range)
     full_history_S = zeros(Float64, n_steps, length(observers))
@@ -49,6 +50,7 @@ function estimate_entropy(params, a_range, get_mapper::Function)
     push!(history_var_S, global_entropy_var)
     push!(history_mean_S, mean(step_entropies))
     push!(history_max_llr, 0.0)
+    push!(history_n_panics, 0)
     push!(history_volumes, basin_volumes(observers))
 
     # collect found attractors for the continuity match
@@ -67,15 +69,16 @@ function estimate_entropy(params, a_range, get_mapper::Function)
         step_entropies = Float64[]
         step_variances = Float64[]
         step_llr = Float64[]
+        step_panics = 0
 
         # Iterate over all boxes
         for (obs_idx, obs) in enumerate(observers)
-            
+
             # 1. Decay Prior
             prior_alpha = Dict{Int, Float64}()
             for (k, v) in obs.alpha
                 # decayed_val = lambda * (v - beta) + beta
-                decayed_val = lambda * v 
+                decayed_val = lambda * v
                 prior_alpha[k] = decayed_val
             end
 
@@ -83,7 +86,7 @@ function estimate_entropy(params, a_range, get_mapper::Function)
             new_counts = Dict{Int, Int}()
             for _ in 1:sparse_n
                 u0 = pick_random_point(obs)
-                label = mapper(u0) 
+                label = mapper(u0)
                 new_counts[label] = get(new_counts, label, 0) + 1
             end
 
@@ -100,6 +103,7 @@ function estimate_entropy(params, a_range, get_mapper::Function)
 
             # 5. Check for Phase Transition (Panic Mode)
             if reject
+                step_panics += 1
                 initialize_prior_from_data!(obs, mapper, beta, dense_n)
                 obs.last_entropy = bayes_entropy(obs.alpha)
                 obs.last_llr = llr
@@ -126,10 +130,11 @@ function estimate_entropy(params, a_range, get_mapper::Function)
         global_entropy_var = sum(step_variances)/(length(observers)^2)
         push!(history_mean_S, mean(step_entropies))
         push!(history_max_llr, maximum(step_llr))
+        push!(history_n_panics, step_panics)
         push!(history_var_S, global_entropy_var)
         push!(history_volumes, basin_volumes(observers))
     end
 
-    return history_mean_S, history_var_S, history_max_llr, history_att, full_history_S, history_volumes
+    return history_mean_S, history_var_S, history_max_llr, history_n_panics, history_att, full_history_S, history_volumes
 
 end 
