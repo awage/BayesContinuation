@@ -142,6 +142,38 @@ function initialize_prior_from_data!(obs::LocalBoxObserver, mapper, beta::Float6
 end
 
 """
+    basin_volumes(observers)
+
+Estimates the relative volume of each basin as the mean expected probability
+of each attractor label across all observer tiles. Each tile has equal physical
+area, so the global fraction of phase space belonging to basin k is:
+
+    V_k ≈ (1/N_tiles) Σ_i  α_{i,k} / α_{i,0}
+
+Returns a `Dict{Int,Float64}` mapping label → relative volume (values sum to 1).
+"""
+function basin_volumes(observers::Vector{LocalBoxObserver})
+    all_labels = Set{Int}()
+    for obs in observers
+        union!(all_labels, keys(obs.alpha))
+    end
+
+    vol = Dict{Int, Float64}()
+    n = length(observers)
+    for k in all_labels
+        total = 0.0
+        for obs in observers
+            a0 = sum(values(obs.alpha))
+            if a0 > 0
+                total += get(obs.alpha, k, 0.0) / a0
+            end
+        end
+        vol[k] = total / n
+    end
+    return vol
+end
+
+"""
 Pick a random physical point (x,y) inside the observer's box.
 """
 function pick_random_point(obs::LocalBoxObserver)

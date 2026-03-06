@@ -41,9 +41,9 @@ function duffing_bayes_continuation(params)
 
     get_map(ω, atts) = get_mapper_duffing(d, F, ω, grid_rec, atts)
 
-    history_mean_S, history_var_S, history_max_llr, history_att, full_history_S = estimate_entropy(params, ω_range, get_map)
+    history_mean_S, history_var_S, history_max_llr, history_att, full_history_S, history_volumes = estimate_entropy(params, ω_range, get_map)
 
-    return @strdict(history_mean_S, history_var_S, history_max_llr, history_att, full_history_S)
+    return @strdict(history_mean_S, history_var_S, history_max_llr, history_att, full_history_S, history_volumes)
 end
 
 
@@ -80,7 +80,7 @@ data, file = produce_or_load(
     suffix = "jld2", force = true
 )
 
-@unpack history_mean_S, history_var_S, history_max_llr, history_att, full_history_S = data
+@unpack history_mean_S, history_var_S, history_max_llr, history_att, full_history_S, history_volumes = data
 
 
 
@@ -89,29 +89,51 @@ println("Done. Mean entropy range: ", extrema(history_mean_S))
 println("Max LLR range: ", extrema(history_max_llr))
 
 
+using CairoMakie
+
+# Collect all basin labels that appear across all steps
+all_labels = sort(collect(reduce(union, keys.(history_volumes))))
+# Build per-label volume time series (missing → 0)
+vol_series = Dict(k => [get(hv, k, 0.0) for hv in history_volumes] for k in all_labels)
+
 # PLOTTING
-fig = Figure(resolution = (800, 800))
+fig = Figure(resolution = (800, 1000))
 
 upper_band = history_mean_S .+ (3.0 .* sqrt.(history_var_S))
 lower_band = history_mean_S .- (3.0 .* sqrt.(history_var_S))
 
-    #  Global Entropy
+# Global Entropy
 ax1 = Axis(fig[1, 1], title = "Mean Basin Entropy", ylabel = "Sb")
 lines!(ax1, ω_range, history_mean_S, color = :black)
 xlims!(ax1, ωi, ωf)
-band!(ax1, ω_range, lower_band, upper_band, 
-        color = (:black, 0.2), # Transparent gray
-        label = "Confidence (±3σ)"
-    )
+band!(ax1, ω_range, lower_band, upper_band,
+        color = (:black, 0.2),
+        label = "Confidence (±3σ)")
 
-# Max KL Divergence (The Detector)
+# Max G-statistic (The Detector)
 ax2 = Axis(fig[2, 1], title = "Max Divergence", ylabel = "D_W")
 lines!(ax2, ω_range, history_max_llr, color = :red)
-# hlines!(ax2, [BAYES_FACTOR], color = :gray, linestyle = :dash, label="Panic Threshold")
 xlims!(ax2, ωi, ωf)
 
-# Visualizing how entropy evolves in the boxes over time (flattened)
-ax3 = Axis(fig[3, 1], title = "Entropy per Box", xlabel=L"\omega", ylabel="Box ID")
-heatmap!(ax3, ω_range, 1:(N_TILES^2), full_history_S, colormap=:viridis)
+# Basin volumes — stacked band chart
+colors = Makie.wong_colors()
+ax3 = Axis(fig[3, 1], title = "Relative Basin Volumes", ylabel = "Volume fraction", xlabel = L"\omega")
+let lower = zeros(length(ω_range))
+    for (i, k) in enumerate(all_labels)
+        upper = lower .+ vol_series[k]
+        band!(ax3, ω_range, lower, upper,
+              color = (colors[mod1(i, length(colors))], 0.8),
+              label = "Basin $k")
+        lines!(ax3, ω_range, upper, color = colors[mod1(i, length(colors))], linewidth = 0.8)
+        lower = copy(upper)
+    end
+end
+axislegend(ax3, position = :rt)
+xlims!(ax3, ωi, ωf)
+ylims!(ax3, 0, 1)
+
+# Entropy heatmap per box
+ax4 = Axis(fig[4, 1], title = "Entropy per Box", xlabel = L"\omega", ylabel = "Box ID")
+heatmap!(ax4, ω_range, 1:(N_TILES^2), full_history_S, colormap = :viridis)
 
 save("tiling_entropy_monitor_duffing.png", fig)

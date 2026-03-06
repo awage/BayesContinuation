@@ -28,6 +28,7 @@ function estimate_entropy(params, a_range, get_mapper::Function)
     history_mean_S = Float64[]
     history_var_S = Float64[]
     history_max_llr = Float64[]
+    history_volumes = Dict{Int, Float64}[]
     n_steps = length(a_range)
     full_history_S = zeros(Float64, n_steps, length(observers))
     full_history_llr = zeros(Float64, n_steps, length(observers))
@@ -48,7 +49,8 @@ function estimate_entropy(params, a_range, get_mapper::Function)
     push!(history_var_S, global_entropy_var)
     push!(history_mean_S, mean(step_entropies))
     push!(history_max_llr, 0.0)
-        
+    push!(history_volumes, basin_volumes(observers))
+
     # collect found attractors for the continuity match
     # (and bifurcation diagram if needed)
     atts = extract_attractors(mapper)
@@ -108,7 +110,7 @@ function estimate_entropy(params, a_range, get_mapper::Function)
                 obs.last_llr = llr
             end
 
-            var_k = bayes_entropy_variance(post_alpha)
+            var_k = bayes_entropy_variance(obs.alpha)
 
             push!(step_variances, var_k)
             push!(step_entropies, obs.last_entropy)
@@ -125,8 +127,9 @@ function estimate_entropy(params, a_range, get_mapper::Function)
         push!(history_mean_S, mean(step_entropies))
         push!(history_max_llr, maximum(step_llr))
         push!(history_var_S, global_entropy_var)
+        push!(history_volumes, basin_volumes(observers))
     end
 
-    return history_mean_S, history_var_S, history_max_llr, history_att, full_history_S
+    return history_mean_S, history_var_S, history_max_llr, history_att, full_history_S, history_volumes
 
 end 

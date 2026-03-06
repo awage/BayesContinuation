@@ -22,19 +22,19 @@ function henon_bayes_continuation(d)
     get_map(a, atts)  = get_mapper(a, b, grid_rec, atts)
 
     # Do the estimation 
-    history_mean_S, history_var_S, history_max_llr, history_att, full_history_S = estimate_entropy(params, a_range, get_map) 
+    history_mean_S, history_var_S, history_max_llr, history_att, full_history_S, history_volumes = estimate_entropy(params, a_range, get_map)
 
-    return @strdict(history_mean_S, history_var_S, history_max_llr, history_att, full_history_S)
+    return @strdict(history_mean_S, history_var_S, history_max_llr, history_att, full_history_S, history_volumes)
 end
 
 BETA = 0.5
 LAMBDA = 0.7       # Forgetting factor
-SPARSE_N = 10      # Routine monitoring samples
+SPARSE_N = 15      # Routine monitoring samples
 DENSE_N = SPARSE_N^2     # Panic mode samples (re-learning)
 BAYES_FACTOR = 5 # Threshold to trigger Panic Mode
 
 # Tiling Configuration
-N_TILES = 8 
+N_TILES = 15 
 GLOBAL_BOUNDS = ((-2.0, 2.0), (-2.0, 2.0))
 
 # Parameters
@@ -54,31 +54,51 @@ data, file = produce_or_load(
     suffix = "jld2", force = true
 )
 
-@unpack history_mean_S, history_var_S, history_max_llr, history_att, full_history_S = data
+@unpack history_mean_S, history_var_S, history_max_llr, history_att, full_history_S, history_volumes = data
+
+# Collect all basin labels that appear across all steps
+all_labels = sort(collect(reduce(union, keys.(history_volumes))))
+# Build per-label volume time series (missing → 0)
+vol_series = Dict(k => [get(hv, k, 0.0) for hv in history_volumes] for k in all_labels)
 
 # PLOTTING
-fig = Figure(resolution = (800, 800))
+fig = Figure(resolution = (800, 1000))
 
 upper_band = history_mean_S .+ (3.0 .* sqrt.(history_var_S))
 lower_band = history_mean_S .- (3.0 .* sqrt.(history_var_S))
 
-    #  Global Entropy
+# Global Entropy
 ax1 = Axis(fig[1, 1], title = "Mean Basin Entropy", ylabel = "Sb")
 lines!(ax1, a_range, history_mean_S, color = :black)
 xlims!(ax1, ai, af)
-band!(ax1, a_range, lower_band, upper_band, 
-        color = (:black, 0.2), # Transparent gray
-        label = "Confidence (±3σ)"
-    )
+band!(ax1, a_range, lower_band, upper_band,
+        color = (:black, 0.2),
+        label = "Confidence (±3σ)")
 
-# Max KL Divergence (The Detector)
+# Max G-statistic (The Detector)
 ax2 = Axis(fig[2, 1], title = "Max Divergence", ylabel = "D_W")
 lines!(ax2, a_range, history_max_llr, color = :red)
-# hlines!(ax2, [BAYES_FACTOR], color = :gray, linestyle = :dash, label="Panic Threshold")
 xlims!(ax2, ai, af)
 
-# Visualizing how entropy evolves in the boxes over time (flattened)
-ax3 = Axis(fig[3, 1], title = "Entropy per Box", xlabel="a", ylabel="Box ID")
-heatmap!(ax3, a_range, 1:(N_TILES^2), full_history_S, colormap=:viridis)
+# Basin volumes — stacked band chart
+colors = Makie.wong_colors()
+ax3 = Axis(fig[3, 1], title = "Relative Basin Volumes", ylabel = "Volume fraction", xlabel = "a")
+let lower = zeros(length(a_range))
+    for (i, k) in enumerate(all_labels)
+        upper = lower .+ vol_series[k]
+        band!(ax3, a_range, lower, upper,
+              color = (colors[mod1(i, length(colors))], 0.8),
+              label = "Basin $k")
+        lines!(ax3, a_range, upper, color = colors[mod1(i, length(colors))], linewidth = 0.8)
+        lower = copy(upper)
+    end
+end
+axislegend(ax3, position = :rt)
+xlims!(ax3, ai, af)
+ylims!(ax3, 0, 1)
+
+# Entropy heatmap per box
+ax4 = Axis(fig[4, 1], title = "Entropy per Box", xlabel = "a", ylabel = "Box ID")
+heatmap!(ax4, a_range, 1:(N_TILES^2), full_history_S, colormap = :viridis)
 
 save("tiling_entropy_monitor.png", fig)
