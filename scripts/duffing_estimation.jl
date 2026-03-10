@@ -16,7 +16,7 @@ include(srcdir("bayes_entropy_est.jl"))
     return SVector{2}(du1, du2)
 end
 
-function get_mapper_duffing(d, F, ω, grid_rec, atts = nothing; consecutive_recurrences = 200)
+function get_mapper_duffing(d, F, ω, grid_rec, atts = nothing; consecutive_recurrences = 800)
     diffeq = (reltol = 1e-9, abstol = 1e-9,  alg = Vern9(), maxiters = 1e9)
     ds = CoupledODEs(duffing, rand(2), [d, F, ω]; diffeq)
     smap = StroboscopicMap(ds, 2*pi/ω)
@@ -35,8 +35,8 @@ function duffing_bayes_continuation(params)
     @unpack ω_range, F, d, SPARSE_N, DENSE_N, BAYES_FACTOR, N_TILES, GLOBAL_BOUNDS, LAMBDA = params
     
     # For recurrence finding
-    xg_rec = range(-5, 5, length = 30001)
-    yg_rec = range(-5, 5, length = 30001)
+    xg_rec = range(-5, 5, length = 3001)
+    yg_rec = range(-5, 5, length = 3001)
     grid_rec = (xg_rec, yg_rec)
 
     get_map(ω, atts) = get_mapper_duffing(d, F, ω, grid_rec, atts)
@@ -66,7 +66,7 @@ d = 0.2; F=0.2; ω=1.;  # smooth boundary
 # Sweep forcing amplitude (gamma)
 ωi = 0.1
 ωf = 2.50
-len = 150
+len = 200
 ω_range = range(ωi, ωf, length = len)
 
 
