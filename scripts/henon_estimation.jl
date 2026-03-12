@@ -11,7 +11,7 @@ include(srcdir("bayes_entropy_est.jl"))
 
 function henon_bayes_continuation(d)
 
-    @unpack a_range, b, SPARSE_N, DENSE_N, BAYES_FACTOR, N_TILES, GLOBAL_BOUNDS, LAMBDA = d
+    @unpack a_range, b, sparse_n, dense_n, bayes_factor, n_tiles, global_bounds, λ = d
 
     a = 1.0
     # For recurrence finding
@@ -27,15 +27,14 @@ function henon_bayes_continuation(d)
     return @strdict(history_mean_S, history_var_S, history_max_llr, history_n_panics, history_att, full_history_S, history_volumes)
 end
 
-BETA = 0.5
-LAMBDA = 0.7       # Forgetting factor
-SPARSE_N = 15      # Routine monitoring samples
-DENSE_N = SPARSE_N^2     # Panic mode samples (re-learning)
-BAYES_FACTOR = 5 # Threshold to trigger Panic Mode
+λ = 0.7       # Forgetting factor
+sparse_n = 15      # routine monitoring samples
+dense_n = sparse_n^2     # panic mode samples (re-learning)
+bayes_factor = 5 # threshold to trigger panic mode
 
 # Tiling Configuration
-N_TILES = 15 
-GLOBAL_BOUNDS = ((-2.0, 2.0), (-2.0, 2.0))
+n_tiles = 15 
+global_bounds = ((-2.0, 2.0), (-2.0, 2.0))
 
 # Parameters
 ai = 1.0; af = 2.0; 
@@ -44,7 +43,7 @@ al = 150 # Steps
 a_range = range(ai, af, length = al)
 
 
-params = @strdict a_range b SPARSE_N DENSE_N BAYES_FACTOR N_TILES GLOBAL_BOUNDS LAMBDA
+params = @strdict a_range b sparse_n dense_n bayes_factor n_tiles global_bounds λ
 
 data, file = produce_or_load(
     datadir("data"), 
@@ -99,6 +98,6 @@ ylims!(ax3, 0, 1)
 
 # Entropy heatmap per box
 ax4 = Axis(fig[4, 1], title = "Entropy per Box", xlabel = "a", ylabel = "Box ID")
-heatmap!(ax4, a_range, 1:(N_TILES^2), full_history_S, colormap = :viridis)
+heatmap!(ax4, a_range, 1:(n_tiles^2), full_history_S, colormap = :viridis)
 
 save("tiling_entropy_monitor.png", fig)

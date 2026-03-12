@@ -3,7 +3,7 @@ using SpecialFunctions
 
 """
 Computes Dirichlet Entropy where alpha is a Dictionary of {Label => Count}.
-Missing keys are assumed to have 0 mass (or handled via beta in construction).
+Missing keys are assumed to have 0 mass (or handled via β in construction).
 """
 function bayes_entropy(alpha::Dict{Int, Float64})
     # alpha_0 is the sum of all pseudo-counts in the dictionary
@@ -83,16 +83,16 @@ function bayes_entropy_variance(alpha::Union{Vector{Float64}, Dict{Int, Float64}
 end
 
 mutable struct LocalBoxObserver
-    # Physical boundaries [x_min, x_max], [y_min, y_max]
-    physical_bounds::Tuple{Tuple{Float64, Float64}, Tuple{Float64, Float64}}
+    # Physical boundaries per dimension: [(x_min, x_max), (y_min, y_max), ...]
+    physical_bounds::Vector{Tuple{Float64, Float64}}
     # Dictionary of Dirichlet parameters: Label => Weight
     alpha::Dict{Int, Float64}
     last_entropy::Float64
     last_llr::Float64
 end
 
-function create_observer(phys_bounds, beta::Float64)
-    # Initialize with empty dictionary (conceptual mass is beta everywhere)
+function create_observer(phys_bounds, β::Float64)
+    # Initialize with empty dictionary (conceptual mass is β everywhere)
     return LocalBoxObserver(
         phys_bounds,
         Dict{Int, Float64}(),
@@ -104,7 +104,7 @@ end
 """
 Updates the priors of an observer based on a dense initialization (the initial basins).
 """
-function initialize_prior_from_data!(obs::LocalBoxObserver, data_view::AbstractArray, beta::Float64)
+function initialize_prior_from_data!(obs::LocalBoxObserver, data_view::AbstractArray, β::Float64)
     # Clear current
     empty!(obs.alpha)
     
@@ -114,16 +114,16 @@ function initialize_prior_from_data!(obs::LocalBoxObserver, data_view::AbstractA
         counts[val] = get(counts, val, 0) + 1
     end
     
-    # Convert to alpha = count + beta
+    # Convert to alpha = count + β
     for (k, c) in counts
-        obs.alpha[k] = c + beta
+        obs.alpha[k] = c + β
     end
     
     # Initialize stats
     obs.last_entropy = bayes_entropy(obs.alpha)
 end
 
-function initialize_prior_from_data!(obs::LocalBoxObserver, mapper, beta::Float64, N::Int64)
+function initialize_prior_from_data!(obs::LocalBoxObserver, mapper, β::Float64, N::Int64)
     # Clear current
     empty!(obs.alpha)
     
@@ -134,9 +134,9 @@ function initialize_prior_from_data!(obs::LocalBoxObserver, mapper, beta::Float6
         new_counts[label] = get(new_counts, label, 0) + 1
     end
     
-    # Convert to alpha = count + beta
+    # Convert to alpha = count + β
     for (k, c) in new_counts
-        obs.alpha[k] = c + beta
+        obs.alpha[k] = c + β
     end
     
 end
@@ -174,36 +174,27 @@ function basin_volumes(observers::Vector{LocalBoxObserver})
 end
 
 """
-Pick a random physical point (x,y) inside the observer's box.
+Pick a random point inside the observer's N-dimensional box.
 """
 function pick_random_point(obs::LocalBoxObserver)
-    (xmin, xmax) = obs.physical_bounds[1]
-    (ymin, ymax) = obs.physical_bounds[2]
-    
-    x = xmin + rand() * (xmax - xmin)
-    y = ymin + rand() * (ymax - ymin)
-    return [x, y]
+    return [xmin + rand() * (xmax - xmin) for (xmin, xmax) in obs.physical_bounds]
 end
 
-function generate_tiling(global_bounds, n_tiles, beta)
-    (gx_min, gx_max), (gy_min, gy_max) = global_bounds
-    dx = (gx_max - gx_min) / n_tiles
-    dy = (gy_max - gy_min) / n_tiles
-    
+"""
+    generate_tiling(global_bounds, n_tiles, β)
+
+Creates an N-dimensional tiling of `n_tiles` per dimension, yielding `n_tiles^D` observers
+where `D = length(global_bounds)`. Each element of `global_bounds` is a `(min, max)` pair.
+"""
+function generate_tiling(global_bounds, n_tiles, β)
+    D = length(global_bounds)
+    edges = [collect(range(Float64(lo), Float64(hi); length = n_tiles + 1))
+             for (lo, hi) in global_bounds]
+
     observers = Vector{LocalBoxObserver}()
-    
-    for i in 1:n_tiles
-        for j in 1:n_tiles
-            # Calculate local bounds
-            loc_xmin = gx_min + (i-1)*dx
-            loc_xmax = gx_min + i*dx
-            loc_ymin = gy_min + (j-1)*dy
-            loc_ymax = gy_min + j*dy
-            
-            # Create observer for this tile
-            obs = create_observer(((loc_xmin, loc_xmax), (loc_ymin, loc_ymax)), beta)
-            push!(observers, obs)
-        end
+    for idx in CartesianIndices(ntuple(_ -> n_tiles, D))
+        bounds = [(edges[d][idx[d]], edges[d][idx[d]+1]) for d in 1:D]
+        push!(observers, create_observer(bounds, β))
     end
     return observers
 end
@@ -213,7 +204,7 @@ end
 # ============================================================================
 
 """
-    compute_g_statistic(new_counts, alpha, beta)
+    compute_g_statistic(new_counts, alpha, β)
 
 Computes the Williams-corrected G-statistic for testing whether the observed
 sparse sample `new_counts` is consistent with the Dirichlet prior `alpha`.
@@ -227,7 +218,7 @@ Williams' correction improves the χ² approximation for small samples:
 
 Returns: (D_W, K) where K is the number of categories.
 """
-function compute_g_statistic(new_counts::Dict{Int, Int}, alpha::Dict{Int, Float64}, beta::Float64)
+function compute_g_statistic(new_counts::Dict{Int, Int}, alpha::Dict{Int, Float64}, β::Float64)
     # Union of all categories seen in prior or new data
     all_keys = union(keys(new_counts), keys(alpha))
     K = length(all_keys)
@@ -235,7 +226,7 @@ function compute_g_statistic(new_counts::Dict{Int, Int}, alpha::Dict{Int, Float6
     # Total prior mass
     alpha_0 = 0.0
     for k in all_keys
-        alpha_0 += get(alpha, k, beta)
+        alpha_0 += get(alpha, k, β)
     end
     
     # Total observed counts
@@ -247,7 +238,7 @@ function compute_g_statistic(new_counts::Dict{Int, Int}, alpha::Dict{Int, Float6
     for k in all_keys
         c_i = get(new_counts, k, 0)
         if c_i > 0
-            p_prior = get(alpha, k, beta) / alpha_0   # prior predictive mean
+            p_prior = get(alpha, k, β) / alpha_0   # prior predictive mean
             p_obs = c_i / N_s                          # observed proportion
             D += c_i * log(p_obs / p_prior)
         end
@@ -262,7 +253,7 @@ function compute_g_statistic(new_counts::Dict{Int, Int}, alpha::Dict{Int, Float6
 end
 
 """
-    test_continuity(new_counts, alpha, beta; gamma=0.01)
+    test_continuity(new_counts, alpha, β; gamma=0.01)
 
 Tests whether the sparse sample is consistent with the prior (H₀: no structural change).
 
@@ -273,9 +264,9 @@ Returns: (reject::Bool, D_W::Float64, p_value::Float64)
     - reject = true  → Panic Mode: the basin structure has changed
     - reject = false → Continue: update the posterior normally
 """
-function test_continuity(new_counts::Dict{Int, Int}, alpha::Dict{Int, Float64}, beta::Float64; 
+function test_continuity(new_counts::Dict{Int, Int}, alpha::Dict{Int, Float64}, β::Float64; 
                          gamma::Float64=0.01)
-    D_W, K = compute_g_statistic(new_counts, alpha, beta)
+    D_W, K = compute_g_statistic(new_counts, alpha, β)
     
     # Degrees of freedom
     dof = K - 1

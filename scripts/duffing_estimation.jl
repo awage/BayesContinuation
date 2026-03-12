@@ -32,7 +32,7 @@ end
 
 function duffing_bayes_continuation(params)
 
-    @unpack ω_range, F, d, SPARSE_N, DENSE_N, BAYES_FACTOR, N_TILES, GLOBAL_BOUNDS, LAMBDA = params
+    @unpack ω_range, f, d, sparse_n, dense_n, bayes_factor, n_tiles, global_bounds = params
     
     # For recurrence finding
     xg_rec = range(-5, 5, length = 3001)
@@ -48,14 +48,13 @@ end
 
 
 # Bayesian entropy monitoring params
-BETA = 0.5
-LAMBDA = 0.7
-SPARSE_N = 20
-DENSE_N = SPARSE_N^2
-BAYES_FACTOR = 5.0
+λ = 0.7
+sparse_n = 20
+dense_n = sparse_n^2
+bayes_factor = 5.0
 
-N_TILES = 8
-GLOBAL_BOUNDS = ((-2.0, 2.0), (-2.0, 2.0))
+n_tiles = 8
+global_bounds = ((-2.0, 2.0), (-2.0, 2.0))
 
 # Duffing parameters
 d = 0.2; F=0.2; ω=1.;  # smooth boundary
@@ -70,7 +69,7 @@ len = 200
 ω_range = range(ωi, ωf, length = len)
 
 
-params = @strdict ω_range d F SPARSE_N DENSE_N BAYES_FACTOR N_TILES GLOBAL_BOUNDS LAMBDA
+params = @strdict ω_range d f sparse_n dense_n bayes_factor n_tiles global_bounds λ 
 
 data, file = produce_or_load(
     datadir("data"), 

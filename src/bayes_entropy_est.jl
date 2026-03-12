@@ -12,18 +12,12 @@ include(srcdir("inference_stuff.jl"))
 
 function estimate_entropy(params, a_range, get_mapper::Function)
 
-    @unpack SPARSE_N, DENSE_N, BAYES_FACTOR, N_TILES, GLOBAL_BOUNDS, LAMBDA = params
-    beta = get(params, :BETA, 0.5)
+    @unpack sparse_n, dense_n, n_tiles, global_bounds, λ = params
+    β = get(params, "β", 0.5)
 
-    sparse_n = SPARSE_N
-    dense_n = DENSE_N
-    bayes_factor = BAYES_FACTOR
-    n_tiles = N_TILES
-    global_bounds = GLOBAL_BOUNDS
-    lambda = LAMBDA
 
     println("Initializing $(n_tiles)x$(n_tiles) observer grid...")
-    observers = generate_tiling(global_bounds, n_tiles, beta)
+    observers = generate_tiling(global_bounds, n_tiles, β)
 
     history_mean_S = Float64[]
     history_var_S = Float64[]
@@ -39,7 +33,7 @@ function estimate_entropy(params, a_range, get_mapper::Function)
     step_variances = Float64[]
     # Initialize Priors for ALL boxes and initialize the first frame
     for (i, obs) in enumerate(observers)
-        initialize_prior_from_data!(obs, mapper, beta, dense_n)
+        initialize_prior_from_data!(obs, mapper, β, dense_n)
         obs.last_entropy = bayes_entropy(obs.alpha)
         push!(step_entropies, obs.last_entropy)
         full_history_S[1,i] = obs.last_entropy
@@ -77,8 +71,8 @@ function estimate_entropy(params, a_range, get_mapper::Function)
             # 1. Decay Prior
             prior_alpha = Dict{Int, Float64}()
             for (k, v) in obs.alpha
-                # decayed_val = lambda * (v - beta) + beta
-                decayed_val = lambda * v
+                # decayed_val = λ * (v - β) + β
+                decayed_val = λ * v
                 prior_alpha[k] = decayed_val
             end
 
@@ -93,18 +87,18 @@ function estimate_entropy(params, a_range, get_mapper::Function)
             # 3. Posterior Update
             post_alpha = copy(prior_alpha)
             for (label, count) in new_counts
-                current_val = get(post_alpha, label, beta)
+                current_val = get(post_alpha, label, β)
                 post_alpha[label] = current_val + count
             end
 
             # 4. Compute Metrics
             entropy_curr = bayes_entropy(post_alpha)
-            reject, llr, p_value = test_continuity(new_counts, prior_alpha, beta)
+            reject, llr, p_value = test_continuity(new_counts, prior_alpha, β)
 
             # 5. Check for Phase Transition (Panic Mode)
             if reject
                 step_panics += 1
-                initialize_prior_from_data!(obs, mapper, beta, dense_n)
+                initialize_prior_from_data!(obs, mapper, β, dense_n)
                 obs.last_entropy = bayes_entropy(obs.alpha)
                 obs.last_llr = llr
             else

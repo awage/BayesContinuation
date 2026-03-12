@@ -5,7 +5,7 @@ using Statistics
 using Attractors
 using Random
 using Graphs
-using OrdinaryDiffEq: Tsit5
+using OrdinaryDiffEq:Vern9
 using ProgressMeter
 
 include(srcdir("bayes_entropy_est.jl"))
@@ -39,20 +39,16 @@ end
 # This 2D cross-section is compatible with the Bayesian tiling infrastructure.
 function get_mapper_kuramoto(K_val, N, grid_rec, atts = nothing)
     p = KuramotoParameters(; N, K = K_val)
-    diffeq = (alg = Tsit5(), reltol = 1e-9, maxiters = 1e6)
+    diffeq = (alg = Vern9(), reltol = 1e-9, maxiters = 1e8)
     ds = CoupledODEs(second_order_kuramoto!, zeros(2*N), p; diffeq)
 
-    # Map full 2N state → 2D: (θ₁, ω₁)
-    _proj_state(y) = [y[1], y[N+1]]
-    # Map 2D back to full 2N: set all other angles and velocities to 0
-    _complete(y) = length(y) == 2 ? [y[1]; zeros(N-1); y[2]; zeros(N-1)] : y
+    _complete(y) = (length(y) == N) ? zeros(2*N) : y;
+    _proj_state(y) = y[N+1:2*N]
     psys = ProjectedDynamicalSystem(ds, _proj_state, _complete)
-
-    mapper = AttractorsViaRecurrences(psys, grid_rec; sparse = true, Δt = 1.,
-        show_progress = false, mx_chk_fnd_att = 100,
-        mx_chk_safety = Int(1e7),
-        force_non_adaptive = true,
-        Ttr = 400.)
+    yg = range(-15, 15; length = 51)
+    grid = ntuple(x -> yg, dimension(psys))
+    mapper = AttractorsViaRecurrences(psys, grid;  Δt = 1.,
+        consecutive_recurrences = 200)
 
     if !isnothing(atts) && !isempty(atts)
         seed_mapper!(mapper, atts)
@@ -64,14 +60,9 @@ function get_mapper_kuramoto(K_val, N, grid_rec, atts = nothing)
 end
 
 function kuramoto_bayes_continuation(params)
-    @unpack K_range, N, SPARSE_N, DENSE_N, BAYES_FACTOR, N_TILES, GLOBAL_BOUNDS, LAMBDA = params
+    @unpack K_range, N, sparse_n, dense_n, n_tiles, global_bounds, λ = params
 
-    (xmin, xmax), (ymin, ymax) = GLOBAL_BOUNDS
-    xg_rec = range(xmin, xmax; length = 201)
-    yg_rec = range(ymin, ymax; length = 201)
-    grid_rec = (xg_rec, yg_rec)
-
-    get_map(K, atts) = get_mapper_kuramoto(K, N, grid_rec, atts)
+    get_map(K, atts) = get_mapper_kuramoto(K, N, nothing, atts)
 
     history_mean_S, history_var_S, history_max_llr, history_n_panics, history_att, full_history_S, history_volumes =
         estimate_entropy(params, K_range, get_map)
@@ -82,24 +73,23 @@ end
 
 
 # Bayesian entropy monitoring params
-BETA = 0.5
-LAMBDA = 0.7
-SPARSE_N = 20
-DENSE_N = SPARSE_N^2
-BAYES_FACTOR = 5.0
+λ = 0.7
+sparse_n = 20
+dense_n = sparse_n^2
 
-N_TILES = 8
-# Bounds for the (θ₁, ω₁) cross-section
-GLOBAL_BOUNDS = ((-pi, pi), (-15.0, 15.0))
+n_tiles = 1
 
 # Kuramoto parameters
 N = 10   # Number of oscillators (system dimension = 2N)
+# Initial conditions span the full 2N-dimensional state space:
+# first N dims = angles ∈ (-π, π), next N dims = velocities ∈ (-15, 15)
+global_bounds = vcat([(-pi, pi) for _ in 1:N], [(-15.0, 15.0) for _ in 1:N])
 Ki = 0.0
 Kf = 10.0
-Kl = 50
+Kl = 40
 K_range = range(Ki, Kf; length = Kl)
 
-params = @strdict K_range N SPARSE_N DENSE_N BAYES_FACTOR N_TILES GLOBAL_BOUNDS LAMBDA
+params = @strdict K_range N sparse_n dense_n n_tiles global_bounds λ
 
 data, file = produce_or_load(
     datadir("data"),
@@ -156,6 +146,6 @@ ylims!(ax3, 0, 1)
 
 # Entropy heatmap per box
 ax4 = Axis(fig[4, 1], title = "Entropy per Box", xlabel = "K (coupling)", ylabel = "Box ID")
-heatmap!(ax4, K_range, 1:(N_TILES^2), full_history_S, colormap = :viridis)
+heatmap!(ax4, K_range, 1:size(full_history_S, 2), full_history_S, colormap = :viridis)
 
 save("tiling_entropy_monitor_kuramoto.png", fig)
