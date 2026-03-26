@@ -4,36 +4,50 @@ using LinearAlgebra
 using Statistics
 using Attractors
 using Random
+using SparseArrays
 using Graphs
 using OrdinaryDiffEq:Vern9
 using ProgressMeter
 
 include(srcdir("bayes_entropy_est.jl"))
-
-function second_order_kuramoto!(du, u, p, t)
-    (; N, α, K, incidence, P) = p
-    ωs = view(u, N+1:2N)
-    du[1:N] .= ωs
-    sine_term = K .* (incidence * sin.(incidence' * u[1:N]))
-    @. du[N+1:end] .= P - α*ωs - sine_term
-    return nothing
-end
-
 mutable struct KuramotoParameters{M}
     N::Int
     α::Float64
-    incidence::M
+    Δ::M
+    ΔT::M
     P::Vector{Float64}
     K::Float64
+    # Both of these are dummies
+    x::Vector{Float64}
+    y::Vector{Float64}
 end
-
-function KuramotoParameters(; N = 10, α = 0.1, K = 6.0, seed = 53867481290)
+function KuramotoParameters(; N, K, α = 0.1, seed = 53867481290)
     rng = Random.Xoshiro(seed)
     g = random_regular_graph(N, 3; rng)
-    incidence = incidence_matrix(g, oriented=true)
+    Δ = incidence_matrix(g, oriented=true)
     P = [isodd(i) ? +1.0 : -1.0 for i = 1:N]
-    return KuramotoParameters(N, α, incidence, P, K)
+    x = Δ' * zeros(N)
+    y = zeros(N)
+    ΔT = sparse(Matrix(Δ'))
+    return KuramotoParameters(N, α, Δ, ΔT, P, K, x, y)
 end
+using LinearAlgebra: mul!
+function second_order_kuramoto!(du, u, p, t)
+    (; N, α, K, Δ, ΔT, P, x, y) = p
+    φs = view(u, 1:N)
+    ωs = view(u, N+1:2N)
+    dφs = view(du, 1:N)
+    dωs = view(du, N+1:2N)
+    dφs .= ωs
+    mul!(x, ΔT, φs)
+    x .= sin.(x)
+    mul!(y, Δ, x)
+    y .*= K
+    # the full sine term is y now.
+    @. dωs = P - α*ωs - y
+    return nothing
+end
+
 
 # Project to (θ₁, ω₁) — the phase and velocity of oscillator 1.
 # This 2D cross-section is compatible with the Bayesian tiling infrastructure.
@@ -47,8 +61,8 @@ function get_mapper_kuramoto(K_val, N, grid_rec, atts = nothing)
     psys = ProjectedDynamicalSystem(ds, _proj_state, _complete)
     yg = range(-15, 15; length = 51)
     grid = ntuple(x -> yg, dimension(psys))
-    mapper = AttractorsViaRecurrences(psys, grid;  Δt = 1.,
-        consecutive_recurrences = 200)
+    mapper = AttractorsViaRecurrences(psys, grid;  Δt = 0.1,
+        consecutive_recurrences = 800, consecutive_attractor_steps = 10)
 
     if !isnothing(atts) && !isempty(atts)
         seed_mapper!(mapper, atts)
@@ -74,7 +88,7 @@ end
 
 # Bayesian entropy monitoring params
 λ = 0.7
-sparse_n = 20
+sparse_n = 40
 dense_n = sparse_n^2
 
 n_tiles = 1
@@ -82,11 +96,11 @@ n_tiles = 1
 # Kuramoto parameters
 N = 10   # Number of oscillators (system dimension = 2N)
 # Initial conditions span the full 2N-dimensional state space:
-# first N dims = angles ∈ (-π, π), next N dims = velocities ∈ (-15, 15)
-global_bounds = vcat([(-pi, pi) for _ in 1:N], [(-15.0, 15.0) for _ in 1:N])
+# first N dims = angles ∈ (-π, π), next N dims = velocities ∈ (-pi, pi)
+global_bounds = vcat([(-pi, pi) for _ in 1:N], [(-pi, pi) for _ in 1:N])
 Ki = 0.0
 Kf = 10.0
-Kl = 40
+Kl = 100
 K_range = range(Ki, Kf; length = Kl)
 
 params = @strdict K_range N sparse_n dense_n n_tiles global_bounds λ
