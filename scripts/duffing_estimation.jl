@@ -32,7 +32,7 @@ end
 
 function duffing_bayes_continuation(params)
 
-    @unpack ω_range, f, d, sparse_n, dense_n, bayes_factor, n_tiles, global_bounds = params
+    @unpack ω_range, F, d, sparse_n, dense_n,  n_tiles, global_bounds = params
     
     # For recurrence finding
     xg_rec = range(-5, 5, length = 3001)
@@ -51,7 +51,6 @@ end
 λ = 0.7
 sparse_n = 20
 dense_n = sparse_n^2
-bayes_factor = 5.0
 
 n_tiles = 8
 global_bounds = ((-2.0, 2.0), (-2.0, 2.0))
@@ -69,7 +68,7 @@ len = 200
 ω_range = range(ωi, ωf, length = len)
 
 
-params = @strdict ω_range d f sparse_n dense_n bayes_factor n_tiles global_bounds λ 
+params = @strdict ω_range d F sparse_n dense_n n_tiles global_bounds λ 
 
 data, file = produce_or_load(
     datadir("data"), 
@@ -80,8 +79,6 @@ data, file = produce_or_load(
 )
 
 @unpack history_mean_S, history_var_S, history_max_llr, history_n_panics, history_att, full_history_S, history_volumes = data
-
-
 
 
 println("Done. Mean entropy range: ", extrema(history_mean_S))
@@ -133,6 +130,6 @@ ylims!(ax3, 0, 1)
 
 # Entropy heatmap per box
 ax4 = Axis(fig[4, 1], title = "Entropy per Box", xlabel = L"\omega", ylabel = "Box ID")
-heatmap!(ax4, ω_range, 1:(N_TILES^2), full_history_S, colormap = :viridis)
+heatmap!(ax4, ω_range, 1:(n_tiles^2), full_history_S, colormap = :viridis)
 
 save("tiling_entropy_monitor_duffing.png", fig)
