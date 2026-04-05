@@ -9,7 +9,8 @@ using Graphs
 using OrdinaryDiffEq:Vern9
 using ProgressMeter
 
-include(srcdir("bayes_entropy_est.jl"))
+include(srcdir("BayesContinuation.jl"))
+using .BayesContinuation
 mutable struct KuramotoParameters{M}
     N::Int
     α::Float64
@@ -76,10 +77,10 @@ end
 function kuramoto_bayes_continuation(params)
     @unpack K_range, N, sparse_n, dense_n, n_tiles, global_bounds, λ = params
 
-    get_map(K, atts) = get_mapper_kuramoto(K, N, nothing, atts)
+    oracle = AttractorOracle((K, atts) -> get_mapper_kuramoto(K, N, nothing, atts))
 
     history_mean_S, history_var_S, history_max_llr, history_n_panics, history_att, full_history_S, history_volumes =
-        estimate_entropy(params, K_range, get_map)
+        estimate_entropy(params, K_range, oracle)
 
     return @strdict(history_mean_S, history_var_S, history_max_llr, history_n_panics,
                     history_att, full_history_S, history_volumes)

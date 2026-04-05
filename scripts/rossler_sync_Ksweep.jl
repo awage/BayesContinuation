@@ -10,7 +10,8 @@ using OrdinaryDiffEq
 using Attractors
 using CairoMakie
 
-include(srcdir("bayes_entropy_est.jl"))
+include(srcdir("BayesContinuation.jl"))
+using .BayesContinuation
 
 # ============================================================================
 # Rössler oscillator network — Menck & Kurths (2013) setup
@@ -165,8 +166,6 @@ function (m::RosslerSyncMapper)(u0)
     return R > m.r_thresh ? 1 : 0
 end
 
-Attractors.extract_attractors(::RosslerSyncMapper) = Dict{Int, Nothing}()
-
 # ============================================================================
 # Trivial mapper — returned when the network is linearly unstable (Iₛ empty)
 # Always returns 0: no synchrony possible.
@@ -175,7 +174,6 @@ Attractors.extract_attractors(::RosslerSyncMapper) = Dict{Int, Nothing}()
 struct TrivialMapper end
 
 (::TrivialMapper)(u0) = 0
-Attractors.extract_attractors(::TrivialMapper) = Dict{Int, Nothing}()
 
 # ============================================================================
 # Factory: build mapper for a given rewiring probability p_val
@@ -209,11 +207,8 @@ function rossler_mapper_factory(N, a, b, c, L,
                                 r_thresh, T_transient, T_measure;
                                 diverge_thresh = 1e4)
     f = ODEFunction(rossler_network!; jac = rossler_network_jac!)
-    function _get_mapper(K_val, _atts)
-        p = RosslerParams(N, a, b, c, K_val, L)
-        return RosslerSyncMapper(N, r_thresh, T_transient, T_measure, p, f, diverge_thresh)
-    end
-    return _get_mapper
+    return K_val -> RosslerSyncMapper(N, r_thresh, T_transient, T_measure,
+                                      RosslerParams(N, a, b, c, K_val, L), f, diverge_thresh)
 end
 
 # ============================================================================
@@ -244,7 +239,7 @@ function rossler_Ksweep(d)
 
     history_mean_S, history_var_S, history_max_llr, history_n_panics,
         history_att, full_history_S, history_volumes =
-            estimate_entropy(params, K_range, get_map)
+            estimate_entropy(params, K_range, GenericOracle(get_map))
 
     return @strdict(history_mean_S, history_var_S, history_max_llr,
                     history_n_panics, history_att, full_history_S,

@@ -10,7 +10,8 @@ using Attractors
 using JLD2
 using CairoMakie
 
-include(srcdir("bayes_entropy_est.jl"))
+include(srcdir("BayesContinuation.jl"))
+using .BayesContinuation
 
 # ============================================================================
 # Rössler oscillator network — Menck & Kurths (2013) setup
@@ -98,8 +99,6 @@ function (m::RosslerSyncMapper)(u0)
     return r > m.r_thresh ? 1 : 0
 end
 
-Attractors.extract_attractors(::RosslerSyncMapper) = Dict{Int, Nothing}()
-
 # ============================================================================
 # Trivial mapper — returned when the network is linearly unstable (Iₛ empty)
 # Always returns 0: no synchrony possible.
@@ -108,7 +107,6 @@ Attractors.extract_attractors(::RosslerSyncMapper) = Dict{Int, Nothing}()
 struct TrivialMapper end
 
 (::TrivialMapper)(u0) = 0
-Attractors.extract_attractors(::TrivialMapper) = Dict{Int, Nothing}()
 
 # ============================================================================
 # Helper: build WS graph and return (L, K_lo, K_hi), or nothing if unstable
@@ -142,13 +140,13 @@ function rossler_mapper_factory(N, k_deg, a, b, c,
                                 r_thresh, T_transient, T_measure,
                                 graph_seed, K)
     T_total = T_transient + T_measure
-    function _get_mapper(p_val, _atts)
+    function _get_mapper(p_val)
         result = get_network_and_coupling(N, k_deg, p_val, graph_seed)
         isnothing(result) && return TrivialMapper()
         L, K_lo, K_hi = result
-        p     = RosslerParams(N, a, b, c, K, L)
+        p      = RosslerParams(N, a, b, c, K, L)
         diffeq = (alg = Vern9(), reltol = 1e-9, maxiters = Int(1e8), adaptive = false, dt = 0.1)
-        ds    = CoupledODEs(rossler_network!, zeros(N * 3), p; diffeq)
+        ds     = CoupledODEs(rossler_network!, zeros(N * 3), p; diffeq)
         return RosslerSyncMapper(N, r_thresh, T_transient, T_measure, T_total, ds)
     end
     return _get_mapper
@@ -181,7 +179,7 @@ function rossler_psweep(d)
 
     history_mean_S, history_var_S, history_max_llr, history_n_panics,
         history_att, full_history_S, history_volumes =
-            estimate_entropy(params, p_range, get_map)
+            estimate_entropy(params, p_range, GenericOracle(get_map))
 
     return @strdict(history_mean_S, history_var_S, history_max_llr,
                     history_n_panics, history_att, full_history_S,

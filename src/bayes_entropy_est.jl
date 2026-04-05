@@ -1,20 +1,15 @@
-using DrWatson
-@quickactivate
-using CairoMakie
-using JLD2
-using LinearAlgebra
-using Statistics
-using Attractors
-using ProgressMeter
+# Internal dispatch: build the mapper/callable for the current parameter step
+_build_mapper(oracle::AttractorOracle, param, prev_atts) = oracle.factory(param, prev_atts)
+_build_mapper(oracle::GenericOracle,   param, _)         = oracle.factory(param)
 
-include(srcdir("compute.jl"))
-include(srcdir("inference_stuff.jl"))
+# Internal dispatch: extract attractors after a step (for seeding the next one)
+_get_attractors(oracle::AttractorOracle, mapper) = extract_attractors(mapper)
+_get_attractors(::GenericOracle,         _)      = Dict{Int, Nothing}()
 
-function estimate_entropy(params, a_range, get_mapper::Function)
+function estimate_entropy(params, a_range, oracle::AbstractOracle)
 
     @unpack sparse_n, dense_n, n_tiles, global_bounds, λ = params
     β = get(params, "β", 0.5)
-
 
     println("Initializing $(n_tiles)x$(n_tiles) observer grid...")
     observers = generate_tiling(global_bounds, n_tiles, β)
@@ -27,7 +22,7 @@ function estimate_entropy(params, a_range, get_mapper::Function)
     n_steps = length(a_range)
     full_history_S = zeros(Float64, n_steps, length(observers))
     full_history_llr = zeros(Float64, n_steps, length(observers))
-    mapper = get_mapper(a_range[1], nothing)
+    mapper = _build_mapper(oracle, a_range[1], nothing)
 
     step_entropies = Float64[]
     step_variances = Float64[]
@@ -47,19 +42,14 @@ function estimate_entropy(params, a_range, get_mapper::Function)
     push!(history_n_panics, 0)
     push!(history_volumes, basin_volumes(observers))
 
-    # collect found attractors for the continuity match
-    # (and bifurcation diagram if needed)
-    atts = extract_attractors(mapper)
+    atts = _get_attractors(oracle, mapper)
     history_att = Array{typeof(atts)}(undef, n_steps)
     history_att[1] = atts
 
-
-
     @showprogress for (t_idx, a_val) in enumerate(a_range)
         if t_idx == 1; continue; end
-        
-        # Update System Dynamics and do the attractor seed and match
-        mapper = get_mapper(a_val, history_att[t_idx-1])
+
+        mapper = _build_mapper(oracle, a_val, history_att[t_idx-1])
         step_entropies = Float64[]
         step_variances = Float64[]
         step_llr = Float64[]
@@ -71,7 +61,6 @@ function estimate_entropy(params, a_range, get_mapper::Function)
             # 1. Decay Prior
             prior_alpha = Dict{Int, Float64}()
             for (k, v) in obs.alpha
-                # decayed_val = λ * (v - β) + β
                 decayed_val = λ * v
                 prior_alpha[k] = decayed_val
             end
@@ -118,9 +107,8 @@ function estimate_entropy(params, a_range, get_mapper::Function)
             full_history_S[t_idx, obs_idx] = obs.last_entropy
             full_history_llr[t_idx, obs_idx] = obs.last_llr
         end
-        
-        # collect found attractors for the continuity match
-        history_att[t_idx]  = extract_attractors(mapper)
+
+        history_att[t_idx] = _get_attractors(oracle, mapper)
         global_entropy_var = sum(step_variances)/(length(observers)^2)
         push!(history_mean_S, mean(step_entropies))
         push!(history_max_llr, maximum(step_llr))
@@ -131,4 +119,4 @@ function estimate_entropy(params, a_range, get_mapper::Function)
 
     return history_mean_S, history_var_S, history_max_llr, history_n_panics, history_att, full_history_S, history_volumes
 
-end 
+end

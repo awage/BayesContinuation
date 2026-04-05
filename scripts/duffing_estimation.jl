@@ -7,7 +7,8 @@ using StaticArrays
 using Attractors
 using ProgressMeter
 
-include(srcdir("bayes_entropy_est.jl"))
+include(srcdir("BayesContinuation.jl"))
+using .BayesContinuation
 
 @inline @inbounds function duffing(u, p, t)
     d = p[1]; F = p[2]; omega = p[3]
@@ -39,9 +40,9 @@ function duffing_bayes_continuation(params)
     yg_rec = range(-5, 5, length = 3001)
     grid_rec = (xg_rec, yg_rec)
 
-    get_map(ω, atts) = get_mapper_duffing(d, F, ω, grid_rec, atts)
+    oracle = AttractorOracle((ω, atts) -> get_mapper_duffing(d, F, ω, grid_rec, atts))
 
-    history_mean_S, history_var_S, history_max_llr, history_n_panics, history_att, full_history_S, history_volumes = estimate_entropy(params, ω_range, get_map)
+    history_mean_S, history_var_S, history_max_llr, history_n_panics, history_att, full_history_S, history_volumes = estimate_entropy(params, ω_range, oracle)
 
     return @strdict(history_mean_S, history_var_S, history_max_llr, history_n_panics, history_att, full_history_S, history_volumes)
 end

@@ -8,6 +8,7 @@ DrWatson = "634d3b9d-ee7a-5ddf-bec9-22491ea816e1"
 Graphs = "86223c79-3864-5bf0-83f7-82e725a168b6"
 OrdinaryDiffEq = "1dea7af3-3e70-54e6-95c3-0bf5283fa5ed"
 ProgressMeter = "92933f4c-e287-5a05-a399-4b506db050ca"
+SpecialFunctions = "276daf66-3868-5448-9aa4-cd146d93841b"
 StaticArrays = "90137ffa-7385-5640-81b9-e52037218182"
 
 [compat]

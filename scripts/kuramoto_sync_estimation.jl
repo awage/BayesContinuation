@@ -7,7 +7,8 @@ using OrdinaryDiffEq: Tsit5, ODEProblem, solve
 using CairoMakie
 using ProgressMeter
 
-include(srcdir("bayes_entropy_est.jl"))
+include(srcdir("BayesContinuation.jl"))
+using .BayesContinuation
 
 # ============================================================================
 # First-order Kuramoto model (all-to-all coupling)
@@ -66,18 +67,8 @@ function (m::KuramotoSyncMapper)(u0)
     return r_mean > m.r_thresh ? 1 : 0
 end
 
-# Dummy attractor interface so estimate_entropy works unchanged
-Attractors.extract_attractors(::KuramotoSyncMapper) = Dict{Int, Nothing}()
-
-# ============================================================================
-# get_mapper factory (atts argument is ignored — no attractor matching needed)
-# ============================================================================
-
 function get_mapper_kuramoto_sync(ω, N_osc, r_thresh, T_transient, T_measure)
-    function _get_mapper(K_val, atts)
-        return KuramotoSyncMapper(ω, K_val, N_osc, r_thresh, T_transient, T_measure)
-    end
-    return _get_mapper
+    return K_val -> KuramotoSyncMapper(ω, K_val, N_osc, r_thresh, T_transient, T_measure)
 end
 
 # ============================================================================
@@ -107,11 +98,11 @@ T_measure = 100.0
 
 params = @strdict K_range sparse_n dense_n n_tiles global_bounds λ
 
-get_map = get_mapper_kuramoto_sync(ω, N_osc, r_thresh, T_transient, T_measure)
+oracle = GenericOracle(get_mapper_kuramoto_sync(ω, N_osc, r_thresh, T_transient, T_measure))
 
 history_mean_S, history_var_S, history_max_llr, history_n_panics,
     history_att, full_history_S, history_volumes =
-        estimate_entropy(params, K_range, get_map)
+        estimate_entropy(params, K_range, oracle)
 
 # ============================================================================
 # Plot

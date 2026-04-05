@@ -7,7 +7,8 @@ using Statistics
 using Attractors
 using ProgressMeter
 
-include(srcdir("bayes_entropy_est.jl"))
+include(srcdir("BayesContinuation.jl"))
+using .BayesContinuation
 
 function henon_bayes_continuation(d)
 
@@ -19,10 +20,10 @@ function henon_bayes_continuation(d)
     yg_rec = range(-4, 4, length = 1000)
     grid_rec = (xg_rec, yg_rec)
 
-    get_map(a, atts)  = get_mapper(a, b, grid_rec, atts)
+    oracle = AttractorOracle((a, atts) -> get_mapper(a, b, grid_rec, atts))
 
-    # Do the estimation 
-    history_mean_S, history_var_S, history_max_llr, history_n_panics, history_att, full_history_S, history_volumes = estimate_entropy(params, a_range, get_map)
+    # Do the estimation
+    history_mean_S, history_var_S, history_max_llr, history_n_panics, history_att, full_history_S, history_volumes = estimate_entropy(params, a_range, oracle)
 
     return @strdict(history_mean_S, history_var_S, history_max_llr, history_n_panics, history_att, full_history_S, history_volumes)
 end

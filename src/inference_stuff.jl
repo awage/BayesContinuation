@@ -1,6 +1,3 @@
-using Distributions
-using SpecialFunctions
-
 """
 Computes Dirichlet Entropy where alpha is a Dictionary of {Label => Count}.
 Missing keys are assumed to have 0 mass (or handled via β in construction).
@@ -174,6 +171,41 @@ function basin_volumes(observers::Vector{LocalBoxObserver})
 end
 
 """
+    AbstractOracle
+
+Supertype for oracles (mappers) used by `estimate_entropy`.
+
+Two concrete subtypes are provided:
+- `AttractorOracle`: wraps an Attractors.jl mapper factory `(param, prev_atts) → mapper`.
+  Attractor tracking and label matching across parameter steps is performed automatically.
+- `GenericOracle`: wraps a plain callable factory `param → callable`.
+  No attractor matching is performed; each step is treated independently.
+"""
+abstract type AbstractOracle end
+
+"""
+    AttractorOracle(factory)
+
+Oracle backed by an Attractors.jl mapper. The `factory` must have signature
+`(param_value, prev_attractors) → mapper` where `mapper` is any
+`AttractorsViaRecurrences`-compatible object.
+"""
+struct AttractorOracle <: AbstractOracle
+    factory::Any
+end
+
+"""
+    GenericOracle(factory)
+
+Oracle backed by a plain callable. The `factory` must have signature
+`param_value → callable` where `callable(u0)` returns an integer label.
+No attractor matching is performed between parameter steps.
+"""
+struct GenericOracle <: AbstractOracle
+    factory::Any
+end
+
+"""
 Pick a random point inside the observer's N-dimensional box.
 """
 function pick_random_point(obs::LocalBoxObserver)
@@ -271,92 +303,5 @@ function test_continuity(new_counts::Dict{Int, Int}, alpha::Dict{Int, Float64}, 
     eta = compute_log_bayes_factor(new_counts, alpha, β)
     reject = eta < 0.0
     return reject, eta, 0.0
-end
-
-# ============================================================================
-#  G-statistic detection (kept for comparison)
-# ============================================================================
-
-"""
-    compute_g_statistic(new_counts, alpha, β)
-
-Computes the Williams-corrected G-statistic for testing whether the observed
-sparse sample `new_counts` is consistent with the Dirichlet prior `alpha`.
-
-The G-statistic is:
-    D = 2 Σ cᵢ ln(cᵢ/Ns / p̂ᵢ)
-where p̂ᵢ = αᵢ / α₀ is the prior predictive mean.
-
-Williams' correction improves the χ² approximation for small samples:
-    D_W = D / (1 + (K+1)/(6Ns))
-
-Returns: (D_W, K) where K is the number of categories.
-"""
-function compute_g_statistic(new_counts::Dict{Int, Int}, alpha::Dict{Int, Float64}, β::Float64)
-    # Union of all categories seen in prior or new data
-    all_keys = union(keys(new_counts), keys(alpha))
-    K = length(all_keys)
-    
-    # Total prior mass
-    alpha_0 = 0.0
-    for k in all_keys
-        alpha_0 += get(alpha, k, β)
-    end
-    
-    # Total observed counts
-    N_s = sum(values(new_counts))
-    
-    # Compute G-statistic: D = 2 Σ cᵢ ln(cᵢ/Ns / p̂ᵢ)
-    # Skip categories with cᵢ = 0 (they contribute 0)
-    D = 0.0
-    for k in all_keys
-        c_i = get(new_counts, k, 0)
-        if c_i > 0
-            p_prior = get(alpha, k, β) / alpha_0   # prior predictive mean
-            p_obs = c_i / N_s                          # observed proportion
-            D += c_i * log(p_obs / p_prior)
-        end
-    end
-    D *= 2.0
-    
-    # Williams' correction factor
-    q = 1.0 + (K + 1) / (6 * N_s)
-    D_W = D / q
-    
-    return D_W, K
-end
-
-"""
-    test_continuity_gstat(new_counts, alpha, β; gamma=0.01)
-
-Tests whether the sparse sample is consistent with the prior (H₀: no structural change).
-
-Uses the Williams-corrected G-statistic compared against the χ²(K-1) distribution
-at significance level γ.
-
-Returns: (reject::Bool, D_W::Float64, p_value::Float64)
-    - reject = true  → Panic Mode: the basin structure has changed
-    - reject = false → Continue: update the posterior normally
-"""
-function test_continuity_gstat(new_counts::Dict{Int, Int}, alpha::Dict{Int, Float64}, β::Float64;
-                         gamma::Float64=0.01)
-    D_W, K = compute_g_statistic(new_counts, alpha, β)
-    
-    # Degrees of freedom
-    dof = K - 1
-    
-    if dof <= 0
-        # Only one category: no test needed, trivially consistent
-        return false, D_W, 1.0
-    end
-    
-    # Critical value from χ² distribution
-    chi2_critical = quantile(Chisq(dof), 1.0 - gamma)
-    
-    # p-value for diagnostics
-    p_value = 1.0 - cdf(Chisq(dof), D_W)
-    
-    reject = D_W > chi2_critical
-    return reject, D_W, p_value
 end
 
