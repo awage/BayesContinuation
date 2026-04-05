@@ -105,16 +105,6 @@ function rossler_network_jac!(J, u, p, t)
     return nothing
 end
 
-# Phase order parameter r = |N⁻¹ Σ exp(i φⱼ)|, φⱼ = atan(yⱼ, xⱼ)
-# NOTE: assumes spiral attractor wrapping around origin in x-y plane.
-function phase_order_parameter(u, N)
-    re = 0.0; im = 0.0
-    @inbounds for i in 1:N
-        φ = atan(u[N + i], u[i])
-        re += cos(φ);  im += sin(φ)
-    end
-    return sqrt(re^2 + im^2) / N
-end
 
 # Golomb–Rinzel coherence measure (Golomb & Rinzel 1994):
 #
@@ -267,8 +257,11 @@ n_K_steps   = 50
 
 # Bayesian continuation (over K)
 λ        = 0.7
-sparse_n = 50
-dense_n  = 500
+# sparse_n = 50
+# dense_n  = 500
+sparse_n = 20
+dense_n  = 100
+
 n_tiles  = 1
 
 # Dense sampling in (0, 0.15) where synchronization transitions sharply,

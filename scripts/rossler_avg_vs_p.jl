@@ -19,6 +19,8 @@ r_thresh    = 0.90
 T_transient = 100.0
 T_measure   = 200.0
 λ        = 0.7
+# sparse_n = 20
+# dense_n  = 100
 sparse_n = 50
 dense_n  = 1000
 n_tiles  = 1
@@ -65,7 +67,7 @@ band!(ax, p_values, mean_sync .- std_sync, mean_sync .+ std_sync;
       color = (:steelblue, 0.2))
 lines!(ax,   p_values, mean_sync, color = :steelblue, linewidth = 2)
 scatter!(ax, p_values, mean_sync, color = :steelblue, markersize = 7)
-ylims!(ax, 0.5, 1)
+ylims!(ax, 0.2, 1)
 xlims!(ax, 0, 1)
 
 outpath = plotsdir("rossler_avg_vs_p.png")
