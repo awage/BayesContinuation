@@ -26,8 +26,12 @@ n_tiles  = 1
 p_values  = Float64[]
 mean_sync = Float64[]
 std_sync  = Float64[]
+p_vals = sort(unique(vcat(
+    range(0.0,  0.15, step = 0.01),   # fine grid in transition region
+    range(0.20, 1.00, step = 0.05),   # coarse grid elsewhere
+)))
 
-for p_val in range(0, 1, step = 0.05)
+for p_val in p_vals
     params = @strdict N_osc k_degree graph_seed p_val n_K_steps a_ros b_ros c_ros r_thresh T_transient T_measure sparse_n dense_n n_tiles λ
     fpath  = datadir("data", savename("rossler_Ksweep", params, "jld2"))
 

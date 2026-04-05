@@ -6,7 +6,7 @@ using Random
 using SparseArrays
 using Graphs
 using JLD2
-using OrdinaryDiffEq: Vern9, Rodas5P, AutoVern9, ODEProblem, solve
+using OrdinaryDiffEq
 using Attractors
 using CairoMakie
 
@@ -67,6 +67,43 @@ function rossler_network!(du, u, p, t)
     return nothing
 end
 
+function rossler_network_jac!(J, u, p, t)
+    (; N, a, b, c, K, L) = p
+    z = view(u, 2N+1:3N)
+
+    fill!(J, 0.0)
+    # Blocks indexed as: x = 1:N, y = N+1:2N, z = 2N+1:3N
+    @inbounds for i in 1:N
+        # ∂ẋᵢ/∂xⱼ = −K Lᵢⱼ  (set via Laplacian below)
+        # ∂ẋᵢ/∂yᵢ = −1
+        J[i, N + i]  = -1.0
+        # ∂ẋᵢ/∂zᵢ = −1
+        J[i, 2N + i] = -1.0
+
+        # ∂ẏᵢ/∂xᵢ = 1
+        J[N + i, i]      = 1.0
+        # ∂ẏᵢ/∂yᵢ = a
+        J[N + i, N + i]  = a
+
+        # ∂żᵢ/∂xᵢ = zᵢ
+        J[2N + i, i]      = z[i]
+        # ∂żᵢ/∂zᵢ = xᵢ − c
+        J[2N + i, 2N + i] = u[i] - c
+    end
+
+    # ∂ẋᵢ/∂xⱼ = −K Lᵢⱼ  (top-left N×N block)
+    rows = rowvals(L)
+    vals = nonzeros(L)
+    @inbounds for col in 1:N
+        for idx in nzrange(L, col)
+            row = rows[idx]
+            J[row, col] += -K * vals[idx]
+        end
+    end
+
+    return nothing
+end
+
 # Phase order parameter r = |N⁻¹ Σ exp(i φⱼ)|, φⱼ = atan(yⱼ, xⱼ)
 # NOTE: assumes spiral attractor wrapping around origin in x-y plane.
 function phase_order_parameter(u, N)
@@ -87,30 +124,12 @@ end
 # R = 1  → perfect synchrony;  R ≈ 1/N  → incoherent (independent nodes).
 # Uses x-components as the observable (coupling variable).
 # Takes the full trajectory (iterable of state vectors of length 3N).
-function golomb_rinzel_coherence(traj, N)
-    T       = length(traj)
-    sum_pi  = zeros(N)    # Σ_t xᵢ(t)
-    sum_pi2 = zeros(N)    # Σ_t xᵢ(t)²
-    sum_pb  = 0.0         # Σ_t x̄(t)
-    sum_pb2 = 0.0         # Σ_t x̄(t)²
-
-    for row in traj
-        pb = 0.0
-        @inbounds for i in 1:N
-            xi      = row[i]
-            sum_pi[i]  += xi
-            sum_pi2[i] += xi * xi
-            pb         += xi
-        end
-        pb        /= N
-        sum_pb    += pb
-        sum_pb2   += pb * pb
-    end
-
-    var_pbar    = sum_pb2 / T - (sum_pb / T)^2          # Var_t(x̄)
-    mean_var_pi = mean(@inbounds sum_pi2[i] / T - (sum_pi[i] / T)^2 for i in 1:N)
-
-    mean_var_pi < 1e-12 && return 1.0   # nodes are stationary → trivially coherent
+function golomb_rinzel_coherence(X)
+    # X is T × N, x-components only
+    x_bar       = vec(mean(X; dims=2))  # mean over nodes at each time step → length T
+    var_pbar    = var(x_bar)            # Var_t(x̄)
+    mean_var_pi = mean(var(X; dims=1))  # mean_i( Var_t(xᵢ) )
+    mean_var_pi < 1e-12 && return 1.0
     return var_pbar / mean_var_pi
 end
 
@@ -124,12 +143,24 @@ struct RosslerSyncMapper
     r_thresh::Float64
     T_transient::Float64
     T_measure::Float64
-    ds::CoupledODEs
+    p::RosslerParams
+    f::ODEFunction
+    diverge_thresh::Float64
 end
 
 function (m::RosslerSyncMapper)(u0)
-    y, t = trajectory(m.ds, m.T_measure, u0; Ttr = m.T_transient)
-    R = golomb_rinzel_coherence(y, m.N)
+    tspan  = (0.0, m.T_transient + m.T_measure)
+    saveat = range(m.T_transient, m.T_transient + m.T_measure; step = 1.0)
+    cb     = DiscreteCallback(
+        (u, t, integrator) -> any(abs.(u) .> m.diverge_thresh),
+        terminate!
+    )
+    prob = ODEProblem(m.f, collect(float(u0)), tspan, m.p)
+    sol  = solve(prob, AutoVern9(Rodas5P());
+                 reltol = 1e-9, maxiters = Int(1e8), callback = cb, saveat = saveat)
+    sol.retcode == ReturnCode.Terminated && return 0
+    X = reduce(hcat, sol.u)[1:m.N, :]'  # T × N  (x-components only)
+    R = golomb_rinzel_coherence(X)
     isnan(R) && return 0
     return R > m.r_thresh ? 1 : 0
 end
@@ -175,12 +206,12 @@ end
 
 # Factory for a fixed network (L): returns _get_mapper(K_val, atts) -> RosslerSyncMapper
 function rossler_mapper_factory(N, a, b, c, L,
-                                r_thresh, T_transient, T_measure)
+                                r_thresh, T_transient, T_measure;
+                                diverge_thresh = 1e4)
+    f = ODEFunction(rossler_network!; jac = rossler_network_jac!)
     function _get_mapper(K_val, _atts)
-        p     = RosslerParams(N, a, b, c, K_val, L)
-        diffeq = (alg = Vern9(), reltol = 1e-9, maxiters = Int(1e8), adaptive = false, dt = 0.1)
-        ds    = CoupledODEs(rossler_network!, zeros(N * 3), p; diffeq)
-        return RosslerSyncMapper(N, r_thresh, T_transient, T_measure, ds)
+        p = RosslerParams(N, a, b, c, K_val, L)
+        return RosslerSyncMapper(N, r_thresh, T_transient, T_measure, p, f, diverge_thresh)
     end
     return _get_mapper
 end
@@ -241,8 +272,8 @@ n_K_steps   = 50
 
 # Bayesian continuation (over K)
 λ        = 0.7
-sparse_n = 60
-dense_n  = 1000
+sparse_n = 50
+dense_n  = 500
 n_tiles  = 1
 
 # Dense sampling in (0, 0.15) where synchronization transitions sharply,
@@ -258,7 +289,7 @@ for p_val in p_vals
     try 
         data, file = produce_or_load(
             datadir("data"), params, rossler_Ksweep;
-            prefix = "rossler_Ksweep", storepatch = false, suffix = "jld2", force = true,
+            prefix = "rossler_Ksweep", storepatch = false, suffix = "jld2", force = false,
             filename = hash
         )
 
