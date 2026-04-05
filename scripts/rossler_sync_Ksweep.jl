@@ -5,7 +5,8 @@ using Statistics
 using Random
 using SparseArrays
 using Graphs
-using OrdinaryDiffEq: Vern9, ODEProblem, solve
+using JLD2
+using OrdinaryDiffEq: Vern9, Rodas5P, AutoVern9, ODEProblem, solve
 using Attractors
 using CairoMakie
 
@@ -67,6 +68,7 @@ function rossler_network!(du, u, p, t)
 end
 
 # Phase order parameter r = |N⁻¹ Σ exp(i φⱼ)|, φⱼ = atan(yⱼ, xⱼ)
+# NOTE: assumes spiral attractor wrapping around origin in x-y plane.
 function phase_order_parameter(u, N)
     re = 0.0; im = 0.0
     @inbounds for i in 1:N
@@ -74,6 +76,42 @@ function phase_order_parameter(u, N)
         re += cos(φ);  im += sin(φ)
     end
     return sqrt(re^2 + im^2) / N
+end
+
+# Golomb–Rinzel coherence measure (Golomb & Rinzel 1994):
+#
+#        Var_t( p̄(t) )
+#   R = ─────────────────────────────
+#        mean_i( Var_t( p_i(t) ) )
+#
+# R = 1  → perfect synchrony;  R ≈ 1/N  → incoherent (independent nodes).
+# Uses x-components as the observable (coupling variable).
+# Takes the full trajectory (iterable of state vectors of length 3N).
+function golomb_rinzel_coherence(traj, N)
+    T       = length(traj)
+    sum_pi  = zeros(N)    # Σ_t xᵢ(t)
+    sum_pi2 = zeros(N)    # Σ_t xᵢ(t)²
+    sum_pb  = 0.0         # Σ_t x̄(t)
+    sum_pb2 = 0.0         # Σ_t x̄(t)²
+
+    for row in traj
+        pb = 0.0
+        @inbounds for i in 1:N
+            xi      = row[i]
+            sum_pi[i]  += xi
+            sum_pi2[i] += xi * xi
+            pb         += xi
+        end
+        pb        /= N
+        sum_pb    += pb
+        sum_pb2   += pb * pb
+    end
+
+    var_pbar    = sum_pb2 / T - (sum_pb / T)^2          # Var_t(x̄)
+    mean_var_pi = mean(@inbounds sum_pi2[i] / T - (sum_pi[i] / T)^2 for i in 1:N)
+
+    mean_var_pi < 1e-12 && return 1.0   # nodes are stationary → trivially coherent
+    return var_pbar / mean_var_pi
 end
 
 # ============================================================================
@@ -86,14 +124,14 @@ struct RosslerSyncMapper
     r_thresh::Float64
     T_transient::Float64
     T_measure::Float64
-    T_total::Float64
     ds::CoupledODEs
 end
 
 function (m::RosslerSyncMapper)(u0)
-    y, t = trajectory(m.ds, m.T_total, u0; Ttr = m.T_transient)
-    r = mean(phase_order_parameter(row, m.N) for row in y)
-    return r > m.r_thresh ? 1 : 0
+    y, t = trajectory(m.ds, m.T_measure, u0; Ttr = m.T_transient)
+    R = golomb_rinzel_coherence(y, m.N)
+    isnan(R) && return 0
+    return R > m.r_thresh ? 1 : 0
 end
 
 Attractors.extract_attractors(::RosslerSyncMapper) = Dict{Int, Nothing}()
@@ -138,14 +176,48 @@ end
 # Factory for a fixed network (L): returns _get_mapper(K_val, atts) -> RosslerSyncMapper
 function rossler_mapper_factory(N, a, b, c, L,
                                 r_thresh, T_transient, T_measure)
-    T_total = T_transient + T_measure
     function _get_mapper(K_val, _atts)
         p     = RosslerParams(N, a, b, c, K_val, L)
-        diffeq = (alg = Vern9(), reltol = 1e-9, maxiters = Int(1e8))
+        diffeq = (alg = Vern9(), reltol = 1e-9, maxiters = Int(1e8), adaptive = false, dt = 0.1)
         ds    = CoupledODEs(rossler_network!, zeros(N * 3), p; diffeq)
-        return RosslerSyncMapper(N, r_thresh, T_transient, T_measure, T_total,  ds)
+        return RosslerSyncMapper(N, r_thresh, T_transient, T_measure, ds)
     end
     return _get_mapper
+end
+
+# ============================================================================
+# Computation function (wrapped for produce_or_load)
+# ============================================================================
+
+function rossler_Ksweep(d)
+    @unpack N_osc, k_degree, graph_seed, p_val, n_K_steps,
+            a_ros, b_ros, c_ros, r_thresh, T_transient, T_measure,
+            sparse_n, dense_n, n_tiles, λ = d
+
+    global_bounds = vcat(
+        [(-12.0, 12.0) for _ in 1:N_osc],
+        [(-12.0, 12.0) for _ in 1:N_osc],
+        [( -8.0, 35.0) for _ in 1:N_osc],
+    )
+    params = @strdict sparse_n dense_n n_tiles global_bounds λ
+
+    result = get_network_and_coupling(N_osc, k_degree, p_val, graph_seed, n_K_steps)
+    isnothing(result) && error("p=$p_val → linearly unstable, cannot run continuation")
+    L, K_range = result
+    println("p=$p_val  Iₛ=[$(round(first(K_range), digits=3)), $(round(last(K_range), digits=3))]")
+
+    get_map = rossler_mapper_factory(
+        N_osc, a_ros, b_ros, c_ros, L,
+        r_thresh, T_transient, T_measure
+    )
+
+    history_mean_S, history_var_S, history_max_llr, history_n_panics,
+        history_att, full_history_S, history_volumes =
+            estimate_entropy(params, K_range, get_map)
+
+    return @strdict(history_mean_S, history_var_S, history_max_llr,
+                    history_n_panics, history_att, full_history_S,
+                    history_volumes, K_range)
 end
 
 # ============================================================================
@@ -156,85 +228,77 @@ end
 N_osc      = 100
 k_degree   = 8
 graph_seed = 12345
+p_val      = 0.8
 
 # Rössler parameters
 a_ros, b_ros, c_ros = 0.2, 0.2, 9.0
 
 # Integration settings
-r_thresh    = 0.90      # sync if mean order parameter > r_thresh
-T_transient = 100.0     
-T_measure   = 200.0     
-n_K_steps   = 40        # K values in Iₛ for the K-continuation
+r_thresh    = 0.90
+T_transient = 100.0
+T_measure   = 200.0
+n_K_steps   = 50
 
-# Bayesian continuation (over K, for each fixed network)
+# Bayesian continuation (over K)
 λ        = 0.7
-sparse_n = 40
-dense_n  = 500
-n_tiles  = 1            # single box — state space is 3N-dimensional
+sparse_n = 60
+dense_n  = 1000
+n_tiles  = 1
 
-# IC box in 3N-dimensional space: x,y ∈ (-12,12), z ∈ (0,25)
-global_bounds = vcat(
-    [(-12.0, 12.0) for _ in 1:N_osc],
-    [(-12.0, 12.0) for _ in 1:N_osc],
-    [(  -8, 35.0) for _ in 1:N_osc],
-)
+# Dense sampling in (0, 0.15) where synchronization transitions sharply,
+# coarser beyond.
+p_vals = sort(unique(vcat(
+    range(0.0,  0.15, step = 0.01),   # fine grid in transition region
+    range(0.20, 1.00, step = 0.05),   # coarse grid elsewhere
+)))
 
-# Rewiring probability sweep (outer loop — no continuation across p)
-p_start = 0.01
-p_end   = 1.0
-n_p     = 30
-p_range = exp10.(range(log10(p_start), log10(p_end); length = n_p))
+for p_val in p_vals
+    params = @strdict N_osc k_degree graph_seed p_val n_K_steps a_ros b_ros c_ros  r_thresh T_transient T_measure sparse_n dense_n n_tiles λ
 
-params = @strdict N_osc k_degree sparse_n dense_n n_tiles global_bounds λ
+    try 
+        data, file = produce_or_load(
+            datadir("data"), params, rossler_Ksweep;
+            prefix = "rossler_Ksweep", storepatch = false, suffix = "jld2", force = true,
+            filename = hash
+        )
 
-# ============================================================================
-# Outer loop over p: run K-continuation independently for each network
-# ============================================================================
+        @unpack history_mean_S, history_var_S, history_max_llr, history_n_panics,
+                history_att, full_history_S, history_volumes, K_range = data
+        # ============================================================================
+        # Plot — sync fraction and LLR detector across K sweep
+        # ============================================================================
 
-S_B_vec         = Float64[]          # basin stability averaged over K, per p
-total_panics    = Int[]
-p_valid         = Float64[]          # p values for which Iₛ is non-empty
+        sync_fracs = [get(hv, 1, 0.0) for hv in history_volumes]
+        K_vec      = collect(K_range)
+        println("Loaded from: $file")
 
-for p_val in p_range
-    result = get_network_and_coupling(N_osc, k_degree, p_val, graph_seed, n_K_steps)
-    if isnothing(result)
-        println("p=$(round(p_val, digits=3))  → linearly unstable, skipping")
-        continue
+        fig = Figure(size = (750, 650))
+
+        ax1 = Axis(fig[1, 1],
+            title  = "Rössler network — WS(N=$N_osc, ⟨k⟩=$k_degree, p=$p_val)",
+            ylabel = "Sync fraction  S_B",
+        )
+        lines!(ax1, K_vec, sync_fracs, color = :black, linewidth = 2)
+        scatter!(ax1, K_vec, sync_fracs, color = :black, markersize = 5)
+        ylims!(ax1, 0, 1)
+
+        ax2 = Axis(fig[2, 1],
+            ylabel = "η  (log Bayes factor)",
+            xlabel = "Coupling  K",
+        )
+        lines!(ax2, K_vec, history_max_llr, color = :black, linewidth = 2)
+        hlines!(ax2, [0.0], color = :red, linestyle = :dash, linewidth = 1)
+
+        panic_idx = findall(>(0), history_n_panics)
+        if !isempty(panic_idx)
+            scatter!(ax2, K_vec[panic_idx], history_max_llr[panic_idx],
+                     color = :red, markersize = 8, label = "panic")
+        end
+
+        save(plotsdir(savename("rossler_sync_Ksweep",(;p = p_val),"png")), fig)
+        println("Saved → scripts/rossler_sync_Ksweep.png")
+        println("Sync fraction range : ", extrema(sync_fracs))
+        println("Panics triggered    : ", sum(history_n_panics))
+    catch
     end
-    L, K_range = result
-    println("p=$(round(p_val, digits=3))  Iₛ=[$(round(first(K_range), digits=3)), $(round(last(K_range), digits=3))]")
-
-    get_map = rossler_mapper_factory(
-        N_osc, a_ros, b_ros, c_ros, L,
-        r_thresh, T_transient, T_measure
-    )
-
-    _, _, _, history_n_panics, _, _, history_volumes =
-        estimate_entropy(params, K_range, get_map)
-
-    sync_fracs = [get(hv, 1, 0.0) for hv in history_volumes]
-    push!(S_B_vec, mean(sync_fracs))
-    push!(total_panics, sum(history_n_panics))
-    push!(p_valid, p_val)
 end
-
-# ============================================================================
-# Plot — mirrors Fig. 2 of Menck & Kurths (2013)
-# ============================================================================
-
-fig = Figure(size = (750, 500))
-
-ax1 = Axis(fig[1, 1],
-    title  = "Rössler network — WS(N=$N_osc, ⟨k⟩=$k_degree)",
-    ylabel = "Basin stability  S_B",
-    xlabel = "Rewiring probability  p",
-    xscale = log10,
-)
-lines!(ax1, p_valid, S_B_vec, color = :black, linewidth = 2)
-scatter!(ax1, p_valid, S_B_vec, color = :black, markersize = 6)
-xlims!(ax1, p_start, p_end);  ylims!(ax1, 0, 1)
-
-save(scriptsdir("rossler_sync_estimation.png"), fig)
-println("Saved → scripts/rossler_sync_estimation.png")
-println("S_B range : ", extrema(S_B_vec))
-println("Total panics per p : ", total_panics)

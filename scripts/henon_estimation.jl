@@ -99,4 +99,4 @@ ylims!(ax3, 0, 1)
 ax4 = Axis(fig[4, 1], title = "Entropy per Box", xlabel = "a", ylabel = "Box ID")
 heatmap!(ax4, a_range, 1:(n_tiles^2), full_history_S, colormap = :viridis)
 
-save("tiling_entropy_monitor_henon.png", fig)
+save(plotsdir("tiling_entropy_monitor_henon.png"), fig)

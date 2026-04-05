@@ -132,4 +132,4 @@ ylims!(ax3, 0, 1)
 ax4 = Axis(fig[4, 1], title = "Entropy per Box", xlabel = L"\omega", ylabel = "Box ID")
 heatmap!(ax4, ω_range, 1:(n_tiles^2), full_history_S, colormap = :viridis)
 
-save("tiling_entropy_monitor_duffing.png", fig)
+save(plotsdir("tiling_entropy_monitor_duffing.png"), fig)
