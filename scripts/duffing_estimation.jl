@@ -40,7 +40,7 @@ function duffing_bayes_continuation(params)
     yg_rec = range(-5, 5, length = 3001)
     grid_rec = (xg_rec, yg_rec)
 
-    oracle = AttractorOracle((ω, atts) -> get_mapper_duffing(d, F, ω, grid_rec, atts))
+    oracle = TrackedFactory((ω, atts) -> get_mapper_duffing(d, F, ω, grid_rec, atts))
 
     history_mean_S, history_var_S, history_max_llr, history_n_panics, history_att, full_history_S, history_volumes = estimate_entropy(params, ω_range, oracle)
 

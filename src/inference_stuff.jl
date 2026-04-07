@@ -120,22 +120,26 @@ function initialize_prior_from_data!(obs::LocalBoxObserver, data_view::AbstractA
     obs.last_entropy = bayes_entropy(obs.alpha)
 end
 
-function initialize_prior_from_data!(obs::LocalBoxObserver, mapper, β::Float64, N::Int64)
-    # Clear current
+function initialize_prior_from_data!(obs::LocalBoxObserver, mapper, β::Float64, N::Int64;
+                                     parallel=false)
     empty!(obs.alpha)
-    
+    labels = Vector{Int}(undef, N)
+    if parallel
+        Threads.@threads for i in 1:N
+            labels[i] = mapper(pick_random_point(obs))
+        end
+    else
+        for i in 1:N
+            labels[i] = mapper(pick_random_point(obs))
+        end
+    end
     new_counts = Dict{Int, Int}()
-    for _ in 1:N
-        u0 = pick_random_point(obs)
-        label = mapper(u0) 
+    for label in labels
         new_counts[label] = get(new_counts, label, 0) + 1
     end
-    
-    # Convert to alpha = count + β
     for (k, c) in new_counts
         obs.alpha[k] = c + β
     end
-    
 end
 
 """
@@ -171,39 +175,34 @@ function basin_volumes(observers::Vector{LocalBoxObserver})
 end
 
 """
-    AbstractOracle
+    MapperFactory{F}
 
-Supertype for oracles (mappers) used by `estimate_entropy`.
+Wraps a closure that builds a mapper (callable `u0 → label`) for a given
+parameter value.
 
-Two concrete subtypes are provided:
-- `AttractorOracle`: wraps an Attractors.jl mapper factory `(param, prev_atts) → mapper`.
-  Attractor tracking and label matching across parameter steps is performed automatically.
-- `GenericOracle`: wraps a plain callable factory `param → callable`.
-  No attractor matching is performed; each step is treated independently.
+- `build`: the factory closure.
+- `tracks_attractors`: when `true`, the factory signature must be
+  `(param, prev_attractors) → mapper` and attractor matching is performed
+  between parameter steps.  The underlying mapper is assumed to hold mutable
+  state, so parallel sampling is **disabled**.
+  When `false`, the signature is `param → mapper`, no attractor matching is
+  done, and parallel sampling is allowed.
+
+Convenience constructors:
+- `TrackedFactory(f)` — attractor-tracking mapper (e.g. Attractors.jl).
+- `PlainFactory(f)`   — stateless mapper, no attractor matching.
 """
-abstract type AbstractOracle end
-
-"""
-    AttractorOracle(factory)
-
-Oracle backed by an Attractors.jl mapper. The `factory` must have signature
-`(param_value, prev_attractors) → mapper` where `mapper` is any
-`AttractorsViaRecurrences`-compatible object.
-"""
-struct AttractorOracle <: AbstractOracle
-    factory::Any
+struct MapperFactory{F}
+    build::F
+    tracks_attractors::Bool
 end
 
-"""
-    GenericOracle(factory)
+TrackedFactory(f) = MapperFactory(f, true)
+PlainFactory(f)   = MapperFactory(f, false)
 
-Oracle backed by a plain callable. The `factory` must have signature
-`param_value → callable` where `callable(u0)` returns an integer label.
-No attractor matching is performed between parameter steps.
-"""
-struct GenericOracle <: AbstractOracle
-    factory::Any
-end
+# Backward-compatible aliases (deprecated)
+AttractorOracle(f) = TrackedFactory(f)
+GenericOracle(f)   = PlainFactory(f)
 
 """
 Pick a random point inside the observer's N-dimensional box.

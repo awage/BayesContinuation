@@ -12,8 +12,10 @@ include("compute.jl")
 include("inference_stuff.jl")
 include("bayes_entropy_est.jl")
 
-# Oracle types
-export AbstractOracle, AttractorOracle, GenericOracle
+# Mapper factory
+export MapperFactory, TrackedFactory, PlainFactory
+# Backward-compatible aliases
+export AttractorOracle, GenericOracle
 
 # From inference_stuff.jl
 export LocalBoxObserver

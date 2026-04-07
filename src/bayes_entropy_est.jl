@@ -1,15 +1,25 @@
-# Internal dispatch: build the mapper/callable for the current parameter step
-_build_mapper(oracle::AttractorOracle, param, prev_atts) = oracle.factory(param, prev_atts)
-_build_mapper(oracle::GenericOracle,   param, _)         = oracle.factory(param)
+# Internal dispatch on MapperFactory
+function _build_mapper(mf::MapperFactory, param, prev_atts)
+    return mf.tracks_attractors ? mf.build(param, prev_atts) : mf.build(param)
+end
 
-# Internal dispatch: extract attractors after a step (for seeding the next one)
-_get_attractors(oracle::AttractorOracle, mapper) = extract_attractors(mapper)
-_get_attractors(::GenericOracle,         _)      = Dict{Int, Nothing}()
+function _get_attractors(mf::MapperFactory, mapper)
+    return mf.tracks_attractors ? extract_attractors(mapper) : Dict{Int, Nothing}()
+end
 
-function estimate_entropy(params, a_range, oracle::AbstractOracle)
+# Tracked (Attractors.jl) mappers hold mutable state → not thread-safe.
+_parallel_allowed(mf::MapperFactory) = !mf.tracks_attractors
+
+function estimate_entropy(params, a_range, oracle::MapperFactory; parallel=false)
 
     @unpack sparse_n, dense_n, n_tiles, global_bounds, λ = params
     β = get(params, "β", 0.5)
+
+    if parallel && !_parallel_allowed(oracle)
+        @warn "parallel=true is not supported for tracked mappers: the underlying " *
+              "mapper has internal mutable state that is not thread-safe. Running sequentially."
+        parallel = false
+    end
 
     println("Initializing $(n_tiles)x$(n_tiles) observer grid...")
     observers = generate_tiling(global_bounds, n_tiles, β)
@@ -28,7 +38,7 @@ function estimate_entropy(params, a_range, oracle::AbstractOracle)
     step_variances = Float64[]
     # Initialize Priors for ALL boxes and initialize the first frame
     for (i, obs) in enumerate(observers)
-        initialize_prior_from_data!(obs, mapper, β, dense_n)
+        initialize_prior_from_data!(obs, mapper, β, dense_n; parallel)
         obs.last_entropy = bayes_entropy(obs.alpha)
         push!(step_entropies, obs.last_entropy)
         full_history_S[1,i] = obs.last_entropy
@@ -66,10 +76,18 @@ function estimate_entropy(params, a_range, oracle::AbstractOracle)
             end
 
             # 2. Sparse Sampling
+            labels = Vector{Int}(undef, sparse_n)
+            if parallel
+                Threads.@threads for i in 1:sparse_n
+                    labels[i] = mapper(pick_random_point(obs))
+                end
+            else
+                for i in 1:sparse_n
+                    labels[i] = mapper(pick_random_point(obs))
+                end
+            end
             new_counts = Dict{Int, Int}()
-            for _ in 1:sparse_n
-                u0 = pick_random_point(obs)
-                label = mapper(u0)
+            for label in labels
                 new_counts[label] = get(new_counts, label, 0) + 1
             end
 
@@ -87,7 +105,7 @@ function estimate_entropy(params, a_range, oracle::AbstractOracle)
             # 5. Check for Phase Transition (Panic Mode)
             if reject
                 step_panics += 1
-                initialize_prior_from_data!(obs, mapper, β, dense_n)
+                initialize_prior_from_data!(obs, mapper, β, dense_n; parallel)
                 obs.last_entropy = bayes_entropy(obs.alpha)
                 obs.last_llr = llr
             else

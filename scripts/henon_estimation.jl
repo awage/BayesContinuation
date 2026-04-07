@@ -20,7 +20,7 @@ function henon_bayes_continuation(d)
     yg_rec = range(-4, 4, length = 1000)
     grid_rec = (xg_rec, yg_rec)
 
-    oracle = AttractorOracle((a, atts) -> get_mapper(a, b, grid_rec, atts))
+    oracle = TrackedFactory((a, atts) -> get_mapper(a, b, grid_rec, atts))
 
     # Do the estimation
     history_mean_S, history_var_S, history_max_llr, history_n_panics, history_att, full_history_S, history_volumes = estimate_entropy(params, a_range, oracle)

@@ -5,10 +5,10 @@ using Statistics
 using Random
 using SparseArrays
 using Graphs
-using JLD2
 using OrdinaryDiffEq
 using Attractors
 using CairoMakie
+using LaTeXStrings
 
 include(srcdir("BayesContinuation.jl"))
 using .BayesContinuation
@@ -229,7 +229,7 @@ function rossler_Ksweep(d)
 
     history_mean_S, history_var_S, history_max_llr, history_n_panics,
         history_att, full_history_S, history_volumes =
-            estimate_entropy(params, K_range, GenericOracle(get_map))
+            estimate_entropy(params, K_range, PlainFactory(get_map))
 
     return @strdict(history_mean_S, history_var_S, history_max_llr,
                     history_n_panics, history_att, full_history_S,
@@ -244,7 +244,6 @@ end
 N_osc      = 100
 k_degree   = 8
 graph_seed = 12345
-p_val      = 0.8
 
 # Rössler parameters
 a_ros, b_ros, c_ros = 0.2, 0.2, 9.0
@@ -257,21 +256,17 @@ n_K_steps   = 50
 
 # Bayesian continuation (over K)
 λ        = 0.7
-# sparse_n = 50
-# dense_n  = 500
-sparse_n = 20
-dense_n  = 100
-
+sparse_n = 50
+dense_n  = 500
 n_tiles  = 1
 
-# Dense sampling in (0, 0.15) where synchronization transitions sharply,
-# coarser beyond.
 p_vals = sort(unique(vcat(
     range(0.0,  0.15, step = 0.01),   # fine grid in transition region
     range(0.20, 1.00, step = 0.05),   # coarse grid elsewhere
 )))
 
 for p_val in p_vals
+
     params = @strdict N_osc k_degree graph_seed p_val n_K_steps a_ros b_ros c_ros  r_thresh T_transient T_measure sparse_n dense_n n_tiles λ
 
     try 
@@ -294,16 +289,18 @@ for p_val in p_vals
         fig = Figure(size = (750, 650))
 
         ax1 = Axis(fig[1, 1],
-            title  = "Rössler network — WS(N=$N_osc, ⟨k⟩=$k_degree, p=$p_val)",
-            ylabel = "Sync fraction  S_B",
+            yticklabelsize = 15, xticklabelsvisible = false, ylabelsize = 20,
+            # title  = "Rössler network — WS(N=$N_osc, ⟨k⟩=$k_degree, p=$p_val)",
+            ylabel = L"S_B",
         )
         lines!(ax1, K_vec, sync_fracs, color = :black, linewidth = 2)
         scatter!(ax1, K_vec, sync_fracs, color = :black, markersize = 5)
         ylims!(ax1, 0, 1)
 
         ax2 = Axis(fig[2, 1],
-            ylabel = "η  (log Bayes factor)",
-            xlabel = "Coupling  K",
+            yticklabelsize = 15, xticklabelsize = 15, ylabelsize = 20, xlabelsize = 20,
+            ylabel = L"\eta  \text{(log Bayes factor)}",
+            xlabel = L"K",
         )
         lines!(ax2, K_vec, history_max_llr, color = :black, linewidth = 2)
         hlines!(ax2, [0.0], color = :red, linestyle = :dash, linewidth = 1)

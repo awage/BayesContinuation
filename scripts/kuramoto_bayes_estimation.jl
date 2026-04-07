@@ -77,7 +77,7 @@ end
 function kuramoto_bayes_continuation(params)
     @unpack K_range, N, sparse_n, dense_n, n_tiles, global_bounds, λ = params
 
-    oracle = AttractorOracle((K, atts) -> get_mapper_kuramoto(K, N, nothing, atts))
+    oracle = TrackedFactory((K, atts) -> get_mapper_kuramoto(K, N, nothing, atts))
 
     history_mean_S, history_var_S, history_max_llr, history_n_panics, history_att, full_history_S, history_volumes =
         estimate_entropy(params, K_range, oracle)

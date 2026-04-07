@@ -179,7 +179,7 @@ function rossler_psweep(d)
 
     history_mean_S, history_var_S, history_max_llr, history_n_panics,
         history_att, full_history_S, history_volumes =
-            estimate_entropy(params, p_range, GenericOracle(get_map))
+            estimate_entropy(params, p_range, PlainFactory(get_map))
 
     return @strdict(history_mean_S, history_var_S, history_max_llr,
                     history_n_panics, history_att, full_history_S,
