@@ -33,12 +33,21 @@ function estimate_entropy(params, a_range, oracle::MapperFactory; parallel=false
     full_history_S = zeros(Float64, n_steps, length(observers))
     full_history_llr = zeros(Float64, n_steps, length(observers))
     mapper = _build_mapper(oracle, a_range[1], nothing)
+    # Build one mapper per thread to avoid races on shared mutable buffers
+    # (e.g. the Lx cache used by mul! inside the ODE right-hand side).
+    thread_mappers = parallel ?
+        [_build_mapper(oracle, a_range[1], nothing) for _ in 1:Threads.nthreads()] :
+        nothing
 
     step_entropies = Float64[]
     step_variances = Float64[]
     # Initialize Priors for ALL boxes and initialize the first frame
     for (i, obs) in enumerate(observers)
-        initialize_prior_from_data!(obs, mapper, β, dense_n; parallel)
+        if parallel
+            initialize_prior_from_data!(obs, thread_mappers, β, dense_n)
+        else
+            initialize_prior_from_data!(obs, mapper, β, dense_n)
+        end
         obs.last_entropy = bayes_entropy(obs.alpha)
         push!(step_entropies, obs.last_entropy)
         full_history_S[1,i] = obs.last_entropy
@@ -60,6 +69,9 @@ function estimate_entropy(params, a_range, oracle::MapperFactory; parallel=false
         if t_idx == 1; continue; end
 
         mapper = _build_mapper(oracle, a_val, history_att[t_idx-1])
+        if parallel
+            thread_mappers = [_build_mapper(oracle, a_val, history_att[t_idx-1]) for _ in 1:Threads.nthreads()]
+        end
         step_entropies = Float64[]
         step_variances = Float64[]
         step_llr = Float64[]
@@ -79,7 +91,7 @@ function estimate_entropy(params, a_range, oracle::MapperFactory; parallel=false
             labels = Vector{Int}(undef, sparse_n)
             if parallel
                 Threads.@threads for i in 1:sparse_n
-                    labels[i] = mapper(pick_random_point(obs))
+                    labels[i] = thread_mappers[Threads.threadid()](pick_random_point(obs))
                 end
             else
                 for i in 1:sparse_n
@@ -105,7 +117,11 @@ function estimate_entropy(params, a_range, oracle::MapperFactory; parallel=false
             # 5. Check for Phase Transition (Panic Mode)
             if reject
                 step_panics += 1
-                initialize_prior_from_data!(obs, mapper, β, dense_n; parallel)
+                if parallel
+                    initialize_prior_from_data!(obs, thread_mappers, β, dense_n)
+                else
+                    initialize_prior_from_data!(obs, mapper, β, dense_n)
+                end
                 obs.last_entropy = bayes_entropy(obs.alpha)
                 obs.last_llr = llr
             else

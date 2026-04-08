@@ -142,6 +142,23 @@ function initialize_prior_from_data!(obs::LocalBoxObserver, mapper, β::Float64,
     end
 end
 
+# Thread-safe overload: one mapper per thread avoids races on shared mutable
+# buffers (e.g. the Lx cache in RosslerParams used by mul! in the ODE rhs).
+function initialize_prior_from_data!(obs::LocalBoxObserver, mappers::Vector, β::Float64, N::Int64)
+    empty!(obs.alpha)
+    labels = Vector{Int}(undef, N)
+    Threads.@threads for i in 1:N
+        labels[i] = mappers[Threads.threadid()](pick_random_point(obs))
+    end
+    new_counts = Dict{Int, Int}()
+    for label in labels
+        new_counts[label] = get(new_counts, label, 0) + 1
+    end
+    for (k, c) in new_counts
+        obs.alpha[k] = c + β
+    end
+end
+
 """
     basin_volumes(observers)
 
