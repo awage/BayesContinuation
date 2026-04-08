@@ -229,11 +229,11 @@ function rossler_Ksweep(d)
     )
 
     history_mean_S, history_var_S, history_max_llr, history_n_panics,
-        full_history_S, history_volumes =
+        full_history_S, full_history_llr, history_volumes =
             estimate_entropy(params, K_range, GenericFactory(get_map))
 
     return @strdict(history_mean_S, history_var_S, history_max_llr,
-                    history_n_panics, full_history_S,
+                    history_n_panics, full_history_S, full_history_llr,
                     history_volumes, K_range)
 end
 

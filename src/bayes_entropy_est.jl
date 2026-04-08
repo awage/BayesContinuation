@@ -120,6 +120,7 @@ function estimate_entropy(params, a_range, factory::MapperFactory; parallel=fals
         push!(history_volumes,  basin_volumes(observers))
     end
 
-    return history_mean_S, history_var_S, history_max_llr, history_n_panics, full_history_S, history_volumes
+    return (; history_mean_S, history_var_S, history_max_llr, history_n_panics,
+              full_history_S, full_history_llr, history_volumes)
 
 end

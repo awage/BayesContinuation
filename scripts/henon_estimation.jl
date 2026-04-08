@@ -6,7 +6,7 @@ using LinearAlgebra
 using Statistics
 using Attractors
 using ProgressMeter
-
+include(srcdir("compute.jl"))
 include(srcdir("BayesContinuation.jl"))
 using .BayesContinuation
 
@@ -23,9 +23,9 @@ function henon_bayes_continuation(d)
     factory = AttractorMapperFactory((a, atts) -> get_mapper(a, b, grid_rec, atts))
 
     # Do the estimation
-    history_mean_S, history_var_S, history_max_llr, history_n_panics, full_history_S, history_volumes = estimate_entropy(params, a_range, factory)
+    history_mean_S, history_var_S, history_max_llr, history_n_panics, full_history_S, full_history_llr, history_volumes = estimate_entropy(params, a_range, factory)
 
-    return @strdict(history_mean_S, history_var_S, history_max_llr, history_n_panics, full_history_S, history_volumes)
+    return @strdict(history_mean_S, history_var_S, history_max_llr, history_n_panics, full_history_S, full_history_llr, history_volumes)
 end
 
 λ = 0.7       # Forgetting factor
@@ -33,7 +33,7 @@ sparse_n = 15      # routine monitoring samples
 dense_n = sparse_n^2     # panic mode samples (re-learning)
 
 # Tiling Configuration
-n_tiles = 20 
+n_tiles = 10 
 global_bounds = ((-2.0, 2.0), (-2.0, 2.0))
 
 # Parameters

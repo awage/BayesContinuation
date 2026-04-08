@@ -79,11 +79,11 @@ function kuramoto_bayes_continuation(params)
 
     factory = AttractorMapperFactory((K, atts) -> get_mapper_kuramoto(K, N, nothing, atts))
 
-    history_mean_S, history_var_S, history_max_llr, history_n_panics, full_history_S, history_volumes =
+    history_mean_S, history_var_S, history_max_llr, history_n_panics, full_history_S, full_history_llr, history_volumes =
         estimate_entropy(params, K_range, factory)
 
     return @strdict(history_mean_S, history_var_S, history_max_llr, history_n_panics,
-                    full_history_S, history_volumes)
+                    full_history_S, full_history_llr, history_volumes)
 end
 
 
