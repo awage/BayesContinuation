@@ -9,6 +9,7 @@ using OrdinaryDiffEq
 using Attractors
 using CairoMakie
 using LaTeXStrings
+using ProgressMeter
 
 include(srcdir("BayesContinuation.jl"))
 using .BayesContinuation
@@ -237,6 +238,56 @@ function rossler_Ksweep(d)
 end
 
 # ============================================================================
+# Pure Monte Carlo sweep — reference computation (no Bayesian continuation)
+#
+# For each K in K_range, samples n_mc initial conditions uniformly from
+# global_bounds and classifies each as sync (1) or not (0) via the mapper.
+# Simulations for a given K are parallelised with @Threads.@threads.
+# One mapper per thread is created to avoid races on the shared Lx buffer.
+# ============================================================================
+
+function rossler_Ksweep_montecarlo(d)
+    @unpack N_osc, k_degree, graph_seed, p_val, n_K_steps,
+            a_ros, b_ros, c_ros, r_thresh, T_transient, T_measure,
+            n_mc = d
+
+    global_bounds = vcat(
+        [(-12.0, 12.0) for _ in 1:N_osc],
+        [(-12.0, 12.0) for _ in 1:N_osc],
+        [( -8.0, 35.0) for _ in 1:N_osc],
+    )
+
+    result = get_network_and_coupling(N_osc, k_degree, p_val, graph_seed, n_K_steps)
+    isnothing(result) && error("p=$p_val → linearly unstable, cannot run montecarlo")
+    L, K_range = result
+    println("p=$p_val  Iₛ=[$(round(first(K_range), digits=3)), $(round(last(K_range), digits=3))]")
+
+    get_map = rossler_mapper_factory(
+        N_osc, a_ros, b_ros, c_ros, L,
+        r_thresh, T_transient, T_measure
+    )
+
+    sync_fracs = zeros(length(K_range))
+
+    for (k_idx, K_val) in enumerate(K_range)
+        # One mapper per thread — each has its own Lx buffer, avoiding races.
+        mappers = [get_map(K_val) for _ in 1:Threads.nthreads()]
+        hits    = zeros(Int, n_mc)
+
+        @showprogress @Threads.threads for i in 1:n_mc
+            tid = Threads.threadid()
+            u0  = [lo + rand() * (hi - lo) for (lo, hi) in global_bounds]
+            hits[i] = mappers[tid](u0)
+        end
+
+        sync_fracs[k_idx] = mean(hits)
+        println("  K=$(round(K_val, digits=4))  sync_frac=$(round(sync_fracs[k_idx], digits=3))")
+    end
+
+    return @strdict(sync_fracs, K_range)
+end
+
+# ============================================================================
 # Setup
 # ============================================================================
 
@@ -316,5 +367,44 @@ for p_val in p_vals
         println("Sync fraction range : ", extrema(sync_fracs))
         println("Panics triggered    : ", sum(history_n_panics))
     catch
+    end
+end
+
+# ============================================================================
+# Monte Carlo reference sweep
+# ============================================================================
+
+n_mc = 5   # IC samples per K step
+
+for p_val in p_vals
+
+    params_mc = @strdict N_osc k_degree graph_seed p_val n_K_steps a_ros b_ros c_ros r_thresh T_transient T_measure n_mc
+
+    try
+        data, file = produce_or_load(
+            datadir("data"), params_mc, rossler_Ksweep_montecarlo;
+            prefix = "rossler_Ksweep_mc", storepatch = false, suffix = "jld2", force = false,
+            filename = hash
+        )
+
+        @unpack sync_fracs, K_range = data
+        K_vec = collect(K_range)
+        println("MC loaded from: $file")
+
+        fig = Figure(size = (750, 400))
+        ax  = Axis(fig[1, 1],
+            yticklabelsize = 15, xticklabelsize = 15, ylabelsize = 20, xlabelsize = 20,
+            ylabel = L"S_B \text{ (MC)}",
+            xlabel = L"K",
+        )
+        lines!(ax, K_vec, sync_fracs, color = :black, linewidth = 2)
+        scatter!(ax, K_vec, sync_fracs, color = :black, markersize = 5)
+        ylims!(ax, 0, 1)
+
+        save(plotsdir(savename("rossler_sync_Ksweep_mc", (; p = p_val), "png")), fig)
+        println("Saved MC plot  →  rossler_sync_Ksweep_mc_p=$(p_val).png")
+        println("Sync fraction range : ", extrema(sync_fracs))
+    catch e
+        @warn "MC sweep failed for p=$p_val" exception=e
     end
 end
