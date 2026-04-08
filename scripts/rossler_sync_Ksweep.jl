@@ -229,11 +229,11 @@ function rossler_Ksweep(d)
     )
 
     history_mean_S, history_var_S, history_max_llr, history_n_panics,
-        history_att, full_history_S, history_volumes =
-            estimate_entropy(params, K_range, PlainFactory(get_map))
+        full_history_S, history_volumes =
+            estimate_entropy(params, K_range, GenericFactory(get_map))
 
     return @strdict(history_mean_S, history_var_S, history_max_llr,
-                    history_n_panics, history_att, full_history_S,
+                    history_n_panics, full_history_S,
                     history_volumes, K_range)
 end
 
@@ -328,7 +328,7 @@ for p_val in p_vals
         )
 
         @unpack history_mean_S, history_var_S, history_max_llr, history_n_panics,
-                history_att, full_history_S, history_volumes, K_range = data
+                full_history_S, history_volumes, K_range = data
         # ============================================================================
         # Plot — sync fraction and LLR detector across K sweep
         # ============================================================================

@@ -98,11 +98,11 @@ T_measure = 100.0
 
 params = @strdict K_range sparse_n dense_n n_tiles global_bounds λ
 
-oracle = PlainFactory(get_mapper_kuramoto_sync(ω, N_osc, r_thresh, T_transient, T_measure))
+factory = GenericFactory(get_mapper_kuramoto_sync(ω, N_osc, r_thresh, T_transient, T_measure))
 
 history_mean_S, history_var_S, history_max_llr, history_n_panics,
-    history_att, full_history_S, history_volumes =
-        estimate_entropy(params, K_range, oracle)
+    full_history_S, history_volumes =
+        estimate_entropy(params, K_range, factory)
 
 # ============================================================================
 # Plot

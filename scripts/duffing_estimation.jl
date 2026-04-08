@@ -40,11 +40,11 @@ function duffing_bayes_continuation(params)
     yg_rec = range(-5, 5, length = 3001)
     grid_rec = (xg_rec, yg_rec)
 
-    oracle = TrackedFactory((ω, atts) -> get_mapper_duffing(d, F, ω, grid_rec, atts))
+    factory = AttractorMapperFactory((ω, atts) -> get_mapper_duffing(d, F, ω, grid_rec, atts))
 
-    history_mean_S, history_var_S, history_max_llr, history_n_panics, history_att, full_history_S, history_volumes = estimate_entropy(params, ω_range, oracle)
+    history_mean_S, history_var_S, history_max_llr, history_n_panics, full_history_S, history_volumes = estimate_entropy(params, ω_range, factory)
 
-    return @strdict(history_mean_S, history_var_S, history_max_llr, history_n_panics, history_att, full_history_S, history_volumes)
+    return @strdict(history_mean_S, history_var_S, history_max_llr, history_n_panics, full_history_S, history_volumes)
 end
 
 
@@ -79,7 +79,7 @@ data, file = produce_or_load(
     suffix = "jld2", force = true
 )
 
-@unpack history_mean_S, history_var_S, history_max_llr, history_n_panics, history_att, full_history_S, history_volumes = data
+@unpack history_mean_S, history_var_S, history_max_llr, history_n_panics, full_history_S, history_volumes = data
 
 
 println("Done. Mean entropy range: ", extrema(history_mean_S))

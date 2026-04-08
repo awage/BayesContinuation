@@ -1,47 +1,32 @@
-# Internal dispatch on MapperFactory
-function _build_mapper(mf::MapperFactory, param, prev_atts)
-    return mf.tracks_attractors ? mf.build(param, prev_atts) : mf.build(param)
-end
-
-function _get_attractors(mf::MapperFactory, mapper)
-    return mf.tracks_attractors ? extract_attractors(mapper) : Dict{Int, Nothing}()
-end
-
-# Tracked (Attractors.jl) mappers hold mutable state → not thread-safe.
-_parallel_allowed(mf::MapperFactory) = !mf.tracks_attractors
-
-function estimate_entropy(params, a_range, oracle::MapperFactory; parallel=false)
+function estimate_entropy(params, a_range, factory::MapperFactory; parallel=false)
 
     @unpack sparse_n, dense_n, n_tiles, global_bounds, λ = params
     β = get(params, "β", 0.5)
 
-    if parallel && !_parallel_allowed(oracle)
-        @warn "parallel=true is not supported for tracked mappers: the underlying " *
-              "mapper has internal mutable state that is not thread-safe. Running sequentially."
+    if parallel && !_parallel_allowed(factory)
+        @warn "parallel=true ignored: AttractorMapperFactory mappers hold mutable state. Running sequentially."
         parallel = false
     end
 
     println("Initializing $(n_tiles)x$(n_tiles) observer grid...")
     observers = generate_tiling(global_bounds, n_tiles, β)
 
-    history_mean_S = Float64[]
-    history_var_S = Float64[]
-    history_max_llr = Float64[]
-    history_n_panics = Int[]
-    history_volumes = Dict{Int, Float64}[]
-    n_steps = length(a_range)
-    full_history_S = zeros(Float64, n_steps, length(observers))
-    full_history_llr = zeros(Float64, n_steps, length(observers))
-    mapper = _build_mapper(oracle, a_range[1], nothing)
-    # Build one mapper per thread to avoid races on shared mutable buffers
-    # (e.g. the Lx cache used by mul! inside the ODE right-hand side).
+    history_mean_S    = Float64[]
+    history_var_S     = Float64[]
+    history_max_llr   = Float64[]
+    history_n_panics  = Int[]
+    history_volumes   = Dict{Int, Float64}[]
+    n_steps           = length(a_range)
+    full_history_S    = zeros(Float64, n_steps, length(observers))
+    full_history_llr  = zeros(Float64, n_steps, length(observers))
+
+    mapper = build_mapper(factory, a_range[1])
     thread_mappers = parallel ?
-        [_build_mapper(oracle, a_range[1], nothing) for _ in 1:Threads.nthreads()] :
+        [build_mapper(factory, a_range[1]) for _ in 1:Threads.nthreads()] :
         nothing
 
     step_entropies = Float64[]
     step_variances = Float64[]
-    # Initialize Priors for ALL boxes and initialize the first frame
     for (i, obs) in enumerate(observers)
         if parallel
             initialize_prior_from_data!(obs, thread_mappers, β, dense_n)
@@ -50,44 +35,34 @@ function estimate_entropy(params, a_range, oracle::MapperFactory; parallel=false
         end
         obs.last_entropy = bayes_entropy(obs.alpha)
         push!(step_entropies, obs.last_entropy)
-        full_history_S[1,i] = obs.last_entropy
-        var_k = bayes_entropy_variance(obs.alpha)
-        push!(step_variances, var_k)
+        full_history_S[1, i] = obs.last_entropy
+        push!(step_variances, bayes_entropy_variance(obs.alpha))
     end
-    global_entropy_var = sum(step_variances)/(length(observers)^2)
-    push!(history_var_S, global_entropy_var)
-    push!(history_mean_S, mean(step_entropies))
-    push!(history_max_llr, 0.0)
+    push!(history_var_S,    sum(step_variances) / length(observers)^2)
+    push!(history_mean_S,   mean(step_entropies))
+    push!(history_max_llr,  0.0)
     push!(history_n_panics, 0)
-    push!(history_volumes, basin_volumes(observers))
-
-    atts = _get_attractors(oracle, mapper)
-    history_att = Array{typeof(atts)}(undef, n_steps)
-    history_att[1] = atts
+    push!(history_volumes,  basin_volumes(observers))
+    update!(factory, mapper)
 
     @showprogress for (t_idx, a_val) in enumerate(a_range)
         if t_idx == 1; continue; end
 
-        mapper = _build_mapper(oracle, a_val, history_att[t_idx-1])
+        mapper = build_mapper(factory, a_val)
         if parallel
-            thread_mappers = [_build_mapper(oracle, a_val, history_att[t_idx-1]) for _ in 1:Threads.nthreads()]
+            thread_mappers = [build_mapper(factory, a_val) for _ in 1:Threads.nthreads()]
         end
         step_entropies = Float64[]
         step_variances = Float64[]
-        step_llr = Float64[]
-        step_panics = 0
+        step_llr       = Float64[]
+        step_panics    = 0
 
-        # Iterate over all boxes
         for (obs_idx, obs) in enumerate(observers)
 
-            # 1. Decay Prior
-            prior_alpha = Dict{Int, Float64}()
-            for (k, v) in obs.alpha
-                decayed_val = λ * v
-                prior_alpha[k] = decayed_val
-            end
+            # 1. Decay prior
+            prior_alpha = Dict{Int, Float64}(k => λ * v for (k, v) in obs.alpha)
 
-            # 2. Sparse Sampling
+            # 2. Sparse sampling
             labels = Vector{Int}(undef, sparse_n)
             if parallel
                 Threads.@threads for i in 1:sparse_n
@@ -103,18 +78,17 @@ function estimate_entropy(params, a_range, oracle::MapperFactory; parallel=false
                 new_counts[label] = get(new_counts, label, 0) + 1
             end
 
-            # 3. Posterior Update
+            # 3. Posterior update
             post_alpha = copy(prior_alpha)
             for (label, count) in new_counts
-                current_val = get(post_alpha, label, β)
-                post_alpha[label] = current_val + count
+                post_alpha[label] = get(post_alpha, label, β) + count
             end
 
-            # 4. Compute Metrics
+            # 4. Metrics
             entropy_curr = bayes_entropy(post_alpha)
-            reject, llr, p_value = test_continuity(new_counts, prior_alpha, β)
+            reject, llr, _ = test_continuity(new_counts, prior_alpha, β)
 
-            # 5. Check for Phase Transition (Panic Mode)
+            # 5. Panic mode on rejection
             if reject
                 step_panics += 1
                 if parallel
@@ -123,34 +97,29 @@ function estimate_entropy(params, a_range, oracle::MapperFactory; parallel=false
                     initialize_prior_from_data!(obs, mapper, β, dense_n)
                 end
                 obs.last_entropy = bayes_entropy(obs.alpha)
-                obs.last_llr = llr
+                obs.last_llr     = llr
             else
-                # Normal update
-                obs.alpha = post_alpha
+                obs.alpha        = post_alpha
                 obs.last_entropy = entropy_curr
-                obs.last_llr = llr
+                obs.last_llr     = llr
             end
 
-            var_k = bayes_entropy_variance(obs.alpha)
-
-            push!(step_variances, var_k)
+            push!(step_variances, bayes_entropy_variance(obs.alpha))
             push!(step_entropies, obs.last_entropy)
-            push!(step_llr, obs.last_llr)
+            push!(step_llr,       obs.last_llr)
 
-            # Store for full history
-            full_history_S[t_idx, obs_idx] = obs.last_entropy
+            full_history_S[t_idx, obs_idx]   = obs.last_entropy
             full_history_llr[t_idx, obs_idx] = obs.last_llr
         end
 
-        history_att[t_idx] = _get_attractors(oracle, mapper)
-        global_entropy_var = sum(step_variances)/(length(observers)^2)
-        push!(history_mean_S, mean(step_entropies))
-        push!(history_max_llr, maximum(step_llr))
+        update!(factory, mapper)
+        push!(history_mean_S,   mean(step_entropies))
+        push!(history_max_llr,  maximum(step_llr))
         push!(history_n_panics, step_panics)
-        push!(history_var_S, global_entropy_var)
-        push!(history_volumes, basin_volumes(observers))
+        push!(history_var_S,    sum(step_variances) / length(observers)^2)
+        push!(history_volumes,  basin_volumes(observers))
     end
 
-    return history_mean_S, history_var_S, history_max_llr, history_n_panics, history_att, full_history_S, history_volumes
+    return history_mean_S, history_var_S, history_max_llr, history_n_panics, full_history_S, history_volumes
 
 end

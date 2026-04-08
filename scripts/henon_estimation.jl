@@ -20,12 +20,12 @@ function henon_bayes_continuation(d)
     yg_rec = range(-4, 4, length = 1000)
     grid_rec = (xg_rec, yg_rec)
 
-    oracle = TrackedFactory((a, atts) -> get_mapper(a, b, grid_rec, atts))
+    factory = AttractorMapperFactory((a, atts) -> get_mapper(a, b, grid_rec, atts))
 
     # Do the estimation
-    history_mean_S, history_var_S, history_max_llr, history_n_panics, history_att, full_history_S, history_volumes = estimate_entropy(params, a_range, oracle)
+    history_mean_S, history_var_S, history_max_llr, history_n_panics, full_history_S, history_volumes = estimate_entropy(params, a_range, factory)
 
-    return @strdict(history_mean_S, history_var_S, history_max_llr, history_n_panics, history_att, full_history_S, history_volumes)
+    return @strdict(history_mean_S, history_var_S, history_max_llr, history_n_panics, full_history_S, history_volumes)
 end
 
 λ = 0.7       # Forgetting factor
@@ -53,7 +53,7 @@ data, file = produce_or_load(
     suffix = "jld2", force = true
 )
 
-@unpack history_mean_S, history_var_S, history_max_llr, history_n_panics, history_att, full_history_S, history_volumes = data
+@unpack history_mean_S, history_var_S, history_max_llr, history_n_panics, full_history_S, history_volumes = data
 
 # Collect all basin labels that appear across all steps
 all_labels = sort(collect(reduce(union, keys.(history_volumes))))

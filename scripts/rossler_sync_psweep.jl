@@ -178,11 +178,11 @@ function rossler_psweep(d)
     )
 
     history_mean_S, history_var_S, history_max_llr, history_n_panics,
-        history_att, full_history_S, history_volumes =
-            estimate_entropy(params, p_range, PlainFactory(get_map))
+        full_history_S, history_volumes =
+            estimate_entropy(params, p_range, GenericFactory(get_map))
 
     return @strdict(history_mean_S, history_var_S, history_max_llr,
-                    history_n_panics, history_att, full_history_S,
+                    history_n_panics, full_history_S,
                     history_volumes, p_range)
 end
 
@@ -223,7 +223,7 @@ data, file = produce_or_load(
 )
 
 @unpack history_mean_S, history_var_S, history_max_llr, history_n_panics,
-        history_att, full_history_S, history_volumes, p_range = data
+        full_history_S, history_volumes, p_range = data
 
 # ============================================================================
 # Plot — S_B(p) and LLR detector

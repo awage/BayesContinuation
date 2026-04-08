@@ -191,35 +191,6 @@ function basin_volumes(observers::Vector{LocalBoxObserver})
     return vol
 end
 
-"""
-    MapperFactory{F}
-
-Wraps a closure that builds a mapper (callable `u0 → label`) for a given
-parameter value.
-
-- `build`: the factory closure.
-- `tracks_attractors`: when `true`, the factory signature must be
-  `(param, prev_attractors) → mapper` and attractor matching is performed
-  between parameter steps.  The underlying mapper is assumed to hold mutable
-  state, so parallel sampling is **disabled**.
-  When `false`, the signature is `param → mapper`, no attractor matching is
-  done, and parallel sampling is allowed.
-
-Convenience constructors:
-- `TrackedFactory(f)` — attractor-tracking mapper (e.g. Attractors.jl).
-- `PlainFactory(f)`   — stateless mapper, no attractor matching.
-"""
-struct MapperFactory{F}
-    build::F
-    tracks_attractors::Bool
-end
-
-TrackedFactory(f) = MapperFactory(f, true)
-PlainFactory(f)   = MapperFactory(f, false)
-
-# Backward-compatible aliases (deprecated)
-AttractorOracle(f) = TrackedFactory(f)
-GenericOracle(f)   = PlainFactory(f)
 
 """
 Pick a random point inside the observer's N-dimensional box.

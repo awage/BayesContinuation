@@ -77,13 +77,13 @@ end
 function kuramoto_bayes_continuation(params)
     @unpack K_range, N, sparse_n, dense_n, n_tiles, global_bounds, λ = params
 
-    oracle = TrackedFactory((K, atts) -> get_mapper_kuramoto(K, N, nothing, atts))
+    factory = AttractorMapperFactory((K, atts) -> get_mapper_kuramoto(K, N, nothing, atts))
 
-    history_mean_S, history_var_S, history_max_llr, history_n_panics, history_att, full_history_S, history_volumes =
-        estimate_entropy(params, K_range, oracle)
+    history_mean_S, history_var_S, history_max_llr, history_n_panics, full_history_S, history_volumes =
+        estimate_entropy(params, K_range, factory)
 
     return @strdict(history_mean_S, history_var_S, history_max_llr, history_n_panics,
-                    history_att, full_history_S, history_volumes)
+                    full_history_S, history_volumes)
 end
 
 
@@ -114,7 +114,7 @@ data, file = produce_or_load(
     suffix = "jld2", force = true
 )
 
-@unpack history_mean_S, history_var_S, history_max_llr, history_n_panics, history_att, full_history_S, history_volumes = data
+@unpack history_mean_S, history_var_S, history_max_llr, history_n_panics, full_history_S, history_volumes = data
 
 println("Done. Mean entropy range: ", extrema(history_mean_S))
 println("Max LLR range: ", extrema(history_max_llr))
