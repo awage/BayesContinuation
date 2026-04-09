@@ -59,8 +59,9 @@ _parallel_allowed(::AttractorMapperFactory) = false
 include("inference_stuff.jl")
 include("bayes_entropy_est.jl")
 
-# Mapper factory
+# Mapper factory types and interface
 export MapperFactory, GenericFactory, AttractorMapperFactory
+export build_mapper, update!
 
 # From inference_stuff.jl
 # export LocalBoxObserver
