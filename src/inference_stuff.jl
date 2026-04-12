@@ -193,6 +193,43 @@ end
 
 
 """
+    basin_volume_variance(observers)
+
+Returns the Dirichlet posterior variance of each basin volume, averaged over tiles.
+
+For a single tile with Dirichlet(α), the variance of proportion p_k is:
+
+    Var[p_k] = α_k (α₀ − α_k) / (α₀² (α₀ + 1))
+
+For N independent tiles whose contributions are averaged:
+
+    Var[V_k] = (1/N²) Σ_i Var_i[p_{i,k}]
+
+Returns a `Dict{Int,Float64}` mapping label → variance.
+"""
+function basin_volume_variance(observers::Vector{LocalBoxObserver})
+    all_labels = Set{Int}()
+    for obs in observers
+        union!(all_labels, keys(obs.alpha))
+    end
+
+    var_vol = Dict{Int, Float64}()
+    n = length(observers)
+    for k in all_labels
+        total_var = 0.0
+        for obs in observers
+            a0 = sum(values(obs.alpha))
+            if a0 > 0
+                ak = get(obs.alpha, k, 0.0)
+                total_var += ak * (a0 - ak) / (a0^2 * (a0 + 1))
+            end
+        end
+        var_vol[k] = total_var / n^2
+    end
+    return var_vol
+end
+
+"""
 Pick a random point inside the observer's N-dimensional box.
 """
 function pick_random_point(obs::LocalBoxObserver)

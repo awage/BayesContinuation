@@ -16,6 +16,7 @@ function estimate_entropy(params, a_range, factory::MapperFactory; parallel=fals
     history_max_llr   = Float64[]
     history_n_panics  = Int[]
     history_volumes   = Dict{Int, Float64}[]
+    history_vol_var   = Dict{Int, Float64}[]
     n_steps           = length(a_range)
     full_history_S    = zeros(Float64, n_steps, length(observers))
     full_history_llr  = zeros(Float64, n_steps, length(observers))
@@ -43,6 +44,7 @@ function estimate_entropy(params, a_range, factory::MapperFactory; parallel=fals
     push!(history_max_llr,  0.0)
     push!(history_n_panics, 0)
     push!(history_volumes,  basin_volumes(observers))
+    push!(history_vol_var,  basin_volume_variance(observers))
     update!(factory, mapper)
 
     @showprogress for (t_idx, a_val) in enumerate(a_range)
@@ -118,9 +120,10 @@ function estimate_entropy(params, a_range, factory::MapperFactory; parallel=fals
         push!(history_n_panics, step_panics)
         push!(history_var_S,    sum(step_variances) / length(observers)^2)
         push!(history_volumes,  basin_volumes(observers))
+        push!(history_vol_var,  basin_volume_variance(observers))
     end
 
     return (; history_mean_S, history_var_S, history_max_llr, history_n_panics,
-              full_history_S, full_history_llr, history_volumes)
+              full_history_S, full_history_llr, history_volumes, history_vol_var)
 
 end

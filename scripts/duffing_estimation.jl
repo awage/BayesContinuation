@@ -5,10 +5,11 @@ using OrdinaryDiffEq:Vern9
 using Statistics
 using StaticArrays
 using Attractors
-using ProgressMeter
-
+# using ProgressMeter
+#
 include(srcdir("BayesContinuation.jl"))
 using .BayesContinuation
+include(srcdir("compute.jl"))
 
 @inline @inbounds function duffing(u, p, t)
     d = p[1]; F = p[2]; omega = p[3]
@@ -76,7 +77,7 @@ data, file = produce_or_load(
     params, 
     duffing_bayes_continuation;
     prefix = "duffing_bayes", storepatch = false,
-    suffix = "jld2", force = true
+    suffix = "jld2", force = false
 )
 
 @unpack history_mean_S, history_var_S, history_max_llr, history_n_panics, full_history_S, history_volumes = data
@@ -108,21 +109,27 @@ band!(ax1, ω_range, lower_band, upper_band,
         label = "Confidence (±3σ)")
 
 # Panic mode count (The Detector)
-ax2 = Axis(fig[2, 1], title = "Panic Tiles per Step", ylabel = "# panics")
+ax2 = Axis(fig[3, 1], title = "Panic Tiles per Step", ylabel = "# panics", xlabel = L"\omega", xlabelsize = 20)
 stairs!(ax2, ω_range, history_n_panics, color = :red)
 xlims!(ax2, ωi, ωf)
 
 # Basin volumes — stacked band chart
 colors = Makie.wong_colors()
-ax3 = Axis(fig[3, 1], title = "Relative Basin Volumes", ylabel = "Volume fraction", xlabel = L"\omega")
-let lower = zeros(length(ω_range))
+ax3 = Axis(fig[2, 1], title = "Relative Basin Volumes", ylabel = "Volume fraction")
+# let lower = zeros(length(ω_range))
+#     for (i, k) in enumerate(all_labels)
+#         upper = lower .+ vol_series[k]
+        # band!(ax3, ω_range, lower, upper,
+        #       color = (colors[mod1(i, length(colors))], 0.8),
+        #       label = "Basin $k")
+        # lines!(ax3, ω_range, upper, color = colors[mod1(i, length(colors))], linewidth = 0.8)
+        # lower = copy(upper)
+    # end
+# end
+let 
     for (i, k) in enumerate(all_labels)
-        upper = lower .+ vol_series[k]
-        band!(ax3, ω_range, lower, upper,
-              color = (colors[mod1(i, length(colors))], 0.8),
+        lines!(ax3, ω_range, vol_series[k], color = colors[mod1(i, length(colors))], linewidth = 0.8, 
               label = "Basin $k")
-        lines!(ax3, ω_range, upper, color = colors[mod1(i, length(colors))], linewidth = 0.8)
-        lower = copy(upper)
     end
 end
 axislegend(ax3, position = :rt)
@@ -130,7 +137,7 @@ xlims!(ax3, ωi, ωf)
 ylims!(ax3, 0, 1)
 
 # Entropy heatmap per box
-ax4 = Axis(fig[4, 1], title = "Entropy per Box", xlabel = L"\omega", ylabel = "Box ID")
-heatmap!(ax4, ω_range, 1:(n_tiles^2), full_history_S, colormap = :viridis)
+# ax4 = Axis(fig[4, 1], title = "Entropy per Box", xlabel = L"\omega", ylabel = "Box ID")
+# heatmap!(ax4, ω_range, 1:(n_tiles^2), full_history_S, colormap = :viridis)
 
 save(plotsdir("tiling_entropy_monitor_duffing.png"), fig)

@@ -207,7 +207,7 @@ end
 # ============================================================================
 
 function rossler_Ksweep(d)
-    @unpack N_osc, k_degree, graph_seed, p_val, n_K_steps,
+    @unpack N_osc, k_degree, graph_seed, n_avg, p_val, n_K_steps,
             a_ros, b_ros, c_ros, r_thresh, T_transient, T_measure,
             sparse_n, dense_n, n_tiles, λ = d
 
@@ -218,23 +218,106 @@ function rossler_Ksweep(d)
     )
     params = @strdict sparse_n dense_n n_tiles global_bounds λ
 
-    result = get_network_and_coupling(N_osc, k_degree, p_val, graph_seed, n_K_steps)
-    isnothing(result) && error("p=$p_val → linearly unstable, cannot run continuation")
-    L, K_range = result
-    println("p=$p_val  Iₛ=[$(round(first(K_range), digits=3)), $(round(last(K_range), digits=3))]")
+    # Accumulate results over n_avg network realisations
+    acc_mean_S   = nothing
+    acc_var_S    = nothing
+    acc_max_llr  = nothing
+    acc_n_panics = nothing
+    acc_full_S   = nothing
+    acc_full_llr = nothing
+    acc_volumes  = nothing
+    acc_vol_var  = nothing
+    acc_K        = nothing
+    n_valid      = 0
 
-    get_map = rossler_mapper_factory(
-        N_osc, a_ros, b_ros, c_ros, L,
-        r_thresh, T_transient, T_measure
-    )
+    for seed_offset in 0:(n_avg - 1)
+        seed   = graph_seed + seed_offset
+        result = get_network_and_coupling(N_osc, k_degree, p_val, seed, n_K_steps)
+        isnothing(result) && continue   # skip linearly-unstable realisations
 
-    history_mean_S, history_var_S, history_max_llr, history_n_panics,
-        full_history_S, full_history_llr, history_volumes =
-            estimate_entropy(params, K_range, GenericFactory(get_map))
+        L, K_range = result
+        println("p=$p_val  seed=$seed  Iₛ=[$(round(first(K_range), digits=3)), $(round(last(K_range), digits=3))]")
+
+        get_map = rossler_mapper_factory(
+            N_osc, a_ros, b_ros, c_ros, L,
+            r_thresh, T_transient, T_measure
+        )
+
+        res = estimate_entropy(params, K_range, GenericFactory(get_map))
+        h_mean_S   = res.history_mean_S
+        h_var_S    = res.history_var_S
+        h_max_llr  = res.history_max_llr
+        h_n_panics = res.history_n_panics
+        fh_S       = res.full_history_S
+        fh_llr     = res.full_history_llr
+        h_volumes  = res.history_volumes
+        h_vol_var  = res.history_vol_var
+
+        K_vec = collect(K_range)
+
+        if n_valid == 0
+            acc_mean_S   = h_mean_S
+            acc_var_S    = h_var_S
+            acc_max_llr  = h_max_llr
+            acc_n_panics = float.(h_n_panics)
+            acc_full_S   = fh_S
+            acc_full_llr = fh_llr
+            acc_volumes  = [Dict(kv for kv in hv) for hv in h_volumes]
+            acc_vol_var  = [Dict(kv for kv in vv) for vv in h_vol_var]
+            acc_K        = K_vec
+        else
+            acc_mean_S   .+= h_mean_S
+            acc_var_S    .+= h_var_S
+            acc_max_llr  .+= h_max_llr
+            acc_n_panics .+= h_n_panics
+            acc_full_S   .+= fh_S
+            acc_full_llr .+= fh_llr
+            acc_K        .+= K_vec
+            for (i, hv) in enumerate(h_volumes)
+                for (k, v) in hv
+                    acc_volumes[i][k] = get(acc_volumes[i], k, 0.0) + v
+                end
+            end
+            for (i, vv) in enumerate(h_vol_var)
+                for (k, v) in vv
+                    acc_vol_var[i][k] = get(acc_vol_var[i], k, 0.0) + v
+                end
+            end
+        end
+        n_valid += 1
+    end
+
+    n_valid == 0 && error("p=$p_val → all $n_avg network realisations linearly unstable")
+
+    # Average
+    acc_mean_S   ./= n_valid
+    acc_var_S    ./= n_valid
+    acc_max_llr  ./= n_valid
+    acc_n_panics ./= n_valid
+    acc_full_S   ./= n_valid
+    acc_full_llr ./= n_valid
+    acc_K        ./= n_valid
+    for hv in acc_volumes
+        for k in keys(hv); hv[k] /= n_valid; end
+    end
+    for vv in acc_vol_var
+        for k in keys(vv); vv[k] /= n_valid; end
+    end
+
+    K_range = range(first(acc_K), last(acc_K); length = n_K_steps)
+
+    history_mean_S   = acc_mean_S
+    history_var_S    = acc_var_S
+    history_max_llr  = acc_max_llr
+    history_n_panics = acc_n_panics
+    full_history_S   = acc_full_S
+    full_history_llr = acc_full_llr
+    history_volumes  = acc_volumes
+    history_vol_var  = acc_vol_var
 
     return @strdict(history_mean_S, history_var_S, history_max_llr,
                     history_n_panics, full_history_S, full_history_llr,
-                    history_volumes, K_range)
+                    history_volumes, history_vol_var, K_range)
 end
 
 # ============================================================================
@@ -307,9 +390,10 @@ n_K_steps   = 50
 
 # Bayesian continuation (over K)
 λ        = 0.7
-sparse_n = 50
-dense_n  = 500
+sparse_n = 20
+dense_n  = 200
 n_tiles  = 1
+n_avg    = 10   # number of network realisations to average over
 
 p_vals = sort(unique(vcat(
     range(0.0,  0.15, step = 0.01),   # fine grid in transition region
@@ -318,7 +402,7 @@ p_vals = sort(unique(vcat(
 
 for p_val in p_vals
 
-    params = @strdict N_osc k_degree graph_seed p_val n_K_steps a_ros b_ros c_ros  r_thresh T_transient T_measure sparse_n dense_n n_tiles λ
+    params = @strdict N_osc k_degree graph_seed n_avg p_val n_K_steps a_ros b_ros c_ros  r_thresh T_transient T_measure sparse_n dense_n n_tiles λ
 
     try 
         data, file = produce_or_load(
@@ -374,7 +458,7 @@ end
 # Monte Carlo reference sweep
 # ============================================================================
 
-n_mc = 5   # IC samples per K step
+n_mc = 500   # IC samples per K step
 
 for p_val in p_vals
 
@@ -390,21 +474,117 @@ for p_val in p_vals
         @unpack sync_fracs, K_range = data
         K_vec = collect(K_range)
         println("MC loaded from: $file")
+        
+        n_avg = 1 # Single run
+        params = @strdict N_osc k_degree graph_seed n_avg p_val n_K_steps a_ros b_ros c_ros  r_thresh T_transient T_measure sparse_n dense_n n_tiles λ
+        # Bayesian Rossler refference: 
+        data, file = produce_or_load(
+            datadir("data"), params, rossler_Ksweep;
+            prefix = "rossler_Ksweep_sing", storepatch = false, suffix = "jld2", force = false,
+            filename = hash
+        )
+
+        @unpack history_n_panics, history_max_llr, history_volumes, K_range, history_vol_var = data
+        bayes_sync_fracs = [get(hv, 1, 0.0) for hv in history_volumes]
+        bayes_vol_std    = sqrt.([ get(vv, 1, 0.0) for vv in history_vol_var ])
+        # MC binomial std: √(p̂(1−p̂)/n_mc)
+        mc_std = sqrt.(sync_fracs .* (1 .- sync_fracs) ./ n_mc)
 
         fig = Figure(size = (750, 400))
         ax  = Axis(fig[1, 1],
             yticklabelsize = 15, xticklabelsize = 15, ylabelsize = 20, xlabelsize = 20,
-            ylabel = L"S_B \text{ (MC)}",
+            ylabel = L"S_B",
             xlabel = L"K",
         )
-        lines!(ax, K_vec, sync_fracs, color = :black, linewidth = 2)
-        scatter!(ax, K_vec, sync_fracs, color = :black, markersize = 5)
+        band!(ax, K_vec, sync_fracs .- mc_std, sync_fracs .+ mc_std, color = (:black, 0.2))
+        lines!(ax, K_vec, sync_fracs, color = :black, linewidth = 2, label = "MC")
+        band!(ax, K_vec, bayes_sync_fracs .- bayes_vol_std, bayes_sync_fracs .+ bayes_vol_std,
+              color = (:red, 0.2))
+        lines!(ax, K_vec, bayes_sync_fracs, color = :red, linewidth = 2, label = "Bayes")
+        axislegend(ax; position = :lt)
         ylims!(ax, 0, 1)
 
         save(plotsdir(savename("rossler_sync_Ksweep_mc", (; p = p_val), "png")), fig)
         println("Saved MC plot  →  rossler_sync_Ksweep_mc_p=$(p_val).png")
         println("Sync fraction range : ", extrema(sync_fracs))
+
+
+        fig = Figure(size = (750, 400))
+        ax = Axis(fig[1, 1],
+            yticklabelsize = 15, xticklabelsize = 15, ylabelsize = 20, xlabelsize = 20,
+            ylabel = L"\eta  \text{(log Bayes factor)}",
+            xlabel = L"K",
+        )
+        lines!(ax, K_vec, history_max_llr, color = :black, linewidth = 2)
+        hlines!(ax, [0.0], color = :red, linestyle = :dash, linewidth = 1)
+
+        panic_idx = findall(>(0), history_n_panics)
+        if !isempty(panic_idx)
+            scatter!(ax, K_vec[panic_idx], history_max_llr[panic_idx],
+                     color = :red, markersize = 8, label = "panic")
+        end
+
+        save(plotsdir(savename("rossler_sync_Ksweep_alarms",(;p = p_val),"png")), fig)
+
+
     catch e
         @warn "MC sweep failed for p=$p_val" exception=e
     end
+end
+
+# ============================================================================
+# Distance (RMSE over K) between MC and Bayes sync fractions, as a function of p
+# ============================================================================
+
+p_distance = Float64[]
+dist_rmse  = Float64[]
+dist_err   = Float64[]   # SE[RMSE] from MC binomial variance (delta method)
+
+n_avg = 1  # single-run Bayes used as reference
+
+for p_val in p_vals
+    try
+        params_mc = @strdict N_osc k_degree graph_seed p_val n_K_steps a_ros b_ros c_ros r_thresh T_transient T_measure n_mc
+        data_mc, _ = produce_or_load(
+            datadir("data"), params_mc, rossler_Ksweep_montecarlo;
+            prefix = "rossler_Ksweep_mc", storepatch = false, suffix = "jld2", force = false,
+            filename = hash
+        )
+
+        params_bayes = @strdict N_osc k_degree graph_seed n_avg p_val n_K_steps a_ros b_ros c_ros r_thresh T_transient T_measure sparse_n dense_n n_tiles λ
+        data_bayes, _ = produce_or_load(
+            datadir("data"), params_bayes, rossler_Ksweep;
+            prefix = "rossler_Ksweep_sing", storepatch = false, suffix = "jld2", force = false,
+            filename = hash
+        )
+
+        mc_fracs    = data_mc["sync_fracs"]
+        bayes_fracs = [get(hv, 1, 0.0) for hv in data_bayes["history_volumes"]]
+
+        diff_sq  = (mc_fracs .- bayes_fracs).^2
+        rmse     = sqrt(mean(diff_sq))
+        # Delta-method: Var[RMSE] ≈ mean(diff_sq * var_mc) / RMSE²
+        var_mc   = mc_fracs .* (1 .- mc_fracs) ./ n_mc
+        se_rmse  = rmse > 1e-12 ? sqrt(mean(diff_sq .* var_mc)) / rmse : 0.0
+
+        push!(p_distance, p_val)
+        push!(dist_rmse,  rmse)
+        push!(dist_err,   se_rmse)
+    catch e
+        @warn "Distance computation failed for p=$p_val" exception=e
+    end
+end
+
+if !isempty(p_distance)
+    fig_dist = Figure(size = (750, 400))
+    ax_dist  = Axis(fig_dist[1, 1],
+        yticklabelsize = 15, xticklabelsize = 15, ylabelsize = 20, xlabelsize = 20,
+        ylabel = L"\mathrm{RMSE}(S_B^{\mathrm{MC}},\, S_B^{\mathrm{Bayes}})",
+        xlabel = L"p",
+    )
+    lines!(ax_dist,   p_distance, dist_rmse, color = :black, linewidth = 2)
+    scatter!(ax_dist, p_distance, dist_rmse, color = :black, markersize = 6)
+    ylims!(ax_dist, 0, nothing)
+    save(plotsdir("rossler_sync_distance_vs_p.png"), fig_dist)
+    println("Saved distance plot → rossler_sync_distance_vs_p.png")
 end
