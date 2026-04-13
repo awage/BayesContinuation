@@ -588,3 +588,44 @@ if !isempty(p_distance)
     save(plotsdir("rossler_sync_distance_vs_p.png"), fig_dist)
     println("Saved distance plot → rossler_sync_distance_vs_p.png")
 end
+
+# ============================================================================
+# Alarm probability vs p
+#
+# For each p: load the averaged (n_avg=10) Ksweep data and compute
+#   P_alarm(p) = sum(history_n_panics) / n_K_steps
+# ============================================================================
+
+n_avg      = 10
+p_alarm    = Float64[]
+prob_alarm = Float64[]
+
+for p_val in p_vals
+    params_alarm = @strdict N_osc k_degree graph_seed n_avg p_val n_K_steps a_ros b_ros c_ros r_thresh T_transient T_measure sparse_n dense_n n_tiles λ
+    try
+        data, _ = produce_or_load(
+            datadir("data"), params_alarm, rossler_Ksweep;
+            prefix = "rossler_Ksweep", storepatch = false, suffix = "jld2", force = false,
+            filename = hash
+        )
+        h_panics = data["history_n_panics"]
+        push!(p_alarm,    p_val)
+        push!(prob_alarm, sum(h_panics) / n_K_steps)
+    catch e
+        @warn "Alarm probability failed for p=$p_val" exception=e
+    end
+end
+
+if !isempty(p_alarm)
+    fig_alarm = Figure(size = (650, 400))
+    ax_alarm  = Axis(fig_alarm[1, 1],
+        yticklabelsize = 15, xticklabelsize = 15, ylabelsize = 20, xlabelsize = 20,
+        ylabel = L"P_{\mathrm{alarm}}",
+        xlabel = L"p",
+    )
+    lines!(ax_alarm,   p_alarm, prob_alarm, color = :steelblue, linewidth = 2)
+    scatter!(ax_alarm, p_alarm, prob_alarm, color = :steelblue, markersize = 6)
+    ylims!(ax_alarm, 0, nothing)
+    save(plotsdir("rossler_alarm_prob_vs_p.png"), fig_alarm)
+    println("Saved alarm probability plot → rossler_alarm_prob_vs_p.png")
+end
