@@ -39,7 +39,7 @@ global_bounds = ((-2.0, 2.0), (-2.0, 2.0))
 # Parameters
 ai = 1.0; af = 2.0; 
 b = -0.3;  
-al = 1000 # Steps
+al = 200 # Steps
 a_range = range(ai, af, length = al)
 
 
@@ -75,7 +75,7 @@ band!(ax1, a_range, lower_band, upper_band,
         label = "Confidence (±3σ)")
 
 # Panic mode count (The Detector)
-ax2 = Axis(fig[2, 1], title = "Panic Tiles per Step", ylabel = "# panics")
+ax2 = Axis(fig[2, 1], title = "Panic Tiles per Step", ylabel = "# alarms")
 stairs!(ax2, a_range, history_n_panics, color = :red)
 xlims!(ax2, ai, af)
 
@@ -97,7 +97,7 @@ xlims!(ax3, ai, af)
 ylims!(ax3, 0, 1)
 
 # Entropy heatmap per box
-ax4 = Axis(fig[4, 1], title = "Entropy per Box", xlabel = "a", ylabel = "Box ID")
-heatmap!(ax4, a_range, 1:(n_tiles^2), full_history_S, colormap = :viridis)
+# ax4 = Axis(fig[4, 1], title = "Entropy per Box", xlabel = "a", ylabel = "Box ID")
+# heatmap!(ax4, a_range, 1:(n_tiles^2), full_history_S, colormap = :viridis)
 
 save(plotsdir("tiling_entropy_monitor_henon.png"), fig)
