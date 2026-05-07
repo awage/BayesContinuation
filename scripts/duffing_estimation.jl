@@ -54,7 +54,7 @@ end
 sparse_n = 20
 dense_n = sparse_n^2
 
-n_tiles = 8
+n_tiles = 10
 global_bounds = ((-2.0, 2.0), (-2.0, 2.0))
 
 # Duffing parameters
@@ -64,9 +64,9 @@ d = 0.2; F=0.2; ω=1.;  # smooth boundary
 # Integrator resolution for the stroboscopic map
 
 # Sweep forcing amplitude (gamma)
-ωi = 0.1
+ωi = 0.2
 ωf = 2.50
-len = 200
+len = 250
 ω_range = range(ωi, ωf, length = len)
 
 
@@ -77,7 +77,8 @@ data, file = produce_or_load(
     params, 
     duffing_bayes_continuation;
     prefix = "duffing_bayes", storepatch = false,
-    suffix = "jld2", force = false
+    suffix = "jld2", force = false, 
+    filename = hash
 )
 
 @unpack history_mean_S, history_var_S, history_max_llr, history_n_panics, full_history_S, history_volumes = data

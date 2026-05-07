@@ -50,7 +50,8 @@ data, file = produce_or_load(
     params, 
     henon_bayes_continuation;
     prefix = "henon_bayes", storepatch = false,
-    suffix = "jld2", force = true
+    suffix = "jld2", force = false,
+    filename = hash
 )
 
 @unpack history_mean_S, history_var_S, history_max_llr, history_n_panics, full_history_S, history_volumes = data
