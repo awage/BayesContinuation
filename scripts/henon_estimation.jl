@@ -33,7 +33,7 @@ sparse_n = 15      # routine monitoring samples
 dense_n = sparse_n^2     # panic mode samples (re-learning)
 
 # Tiling Configuration
-n_tiles = 10 
+n_tiles = 15 
 global_bounds = ((-2.0, 2.0), (-2.0, 2.0))
 
 # Parameters
@@ -64,25 +64,35 @@ vol_series = Dict(k => [get(hv, k, 0.0) for hv in history_volumes] for k in all_
 # PLOTTING
 fig = Figure(resolution = (800, 1000))
 
+lab_args = (;yticklabelsize = 20, xticklabelsize = 20, ylabelsize = 25, xlabelsize = 25)
+
 upper_band = history_mean_S .+ (3.0 .* sqrt.(history_var_S))
 lower_band = history_mean_S .- (3.0 .* sqrt.(history_var_S))
 
 # Global Entropy
-ax1 = Axis(fig[1, 1], title = "Mean Basin Entropy", ylabel = "Sb")
+ax1 = Axis(fig[1, 1];  ylabel = L"S_b", lab_args...)
 lines!(ax1, a_range, history_mean_S, color = :black)
 xlims!(ax1, ai, af)
 band!(ax1, a_range, lower_band, upper_band,
         color = (:black, 0.2),
         label = "Confidence (±3σ)")
+Label(fig[1, 1, TopLeft()], "(a)",
+        fontsize = 25,
+        padding = (0, 50, -10, 0),
+        halign = :right)
 
 # Panic mode count (The Detector)
-ax2 = Axis(fig[2, 1], title = "Panic Tiles per Step", ylabel = "# alarms")
+ax2 = Axis(fig[2, 1];  ylabel = "# alarms", lab_args...)
 stairs!(ax2, a_range, history_n_panics, color = :red)
 xlims!(ax2, ai, af)
+Label(fig[2, 1, TopLeft()], "(b)",
+        fontsize = 25,
+        padding = (0, 50, -10, 0),
+        halign = :right)
 
 # Basin volumes — stacked band chart
 colors = Makie.wong_colors()
-ax3 = Axis(fig[3, 1], title = "Relative Basin Volumes", ylabel = "Volume fraction", xlabel = "a")
+ax3 = Axis(fig[3, 1];  ylabel = "Volume fraction", xlabel = "a", lab_args...)
 let lower = zeros(length(a_range))
     for (i, k) in enumerate(all_labels)
         upper = lower .+ vol_series[k]
@@ -96,9 +106,13 @@ end
 axislegend(ax3, position = :rt)
 xlims!(ax3, ai, af)
 ylims!(ax3, 0, 1)
+Label(fig[3, 1, TopLeft()], "(c)",
+        fontsize = 25,
+        padding = (0, 50, -10, 0),
+        halign = :right)
 
 # Entropy heatmap per box
 # ax4 = Axis(fig[4, 1], title = "Entropy per Box", xlabel = "a", ylabel = "Box ID")
 # heatmap!(ax4, a_range, 1:(n_tiles^2), full_history_S, colormap = :viridis)
 
-save(plotsdir("tiling_entropy_monitor_henon.png"), fig)
+save(plotsdir("fig1.png"), fig)

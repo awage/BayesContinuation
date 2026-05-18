@@ -37,8 +37,8 @@ function duffing_bayes_continuation(params)
     @unpack ω_range, F, d, sparse_n, dense_n,  n_tiles, global_bounds = params
     
     # For recurrence finding
-    xg_rec = range(-5, 5, length = 3001)
-    yg_rec = range(-5, 5, length = 3001)
+    xg_rec = range(-7, 7, length = 3001)
+    yg_rec = range(-7, 7, length = 3001)
     grid_rec = (xg_rec, yg_rec)
 
     factory = AttractorMapperFactory((ω, atts) -> get_mapper_duffing(d, F, ω, grid_rec, atts))
@@ -54,7 +54,7 @@ end
 sparse_n = 20
 dense_n = sparse_n^2
 
-n_tiles = 10
+n_tiles = 15
 global_bounds = ((-2.0, 2.0), (-2.0, 2.0))
 
 # Duffing parameters
@@ -65,8 +65,8 @@ d = 0.2; F=0.2; ω=1.;  # smooth boundary
 
 # Sweep forcing amplitude (gamma)
 ωi = 0.2
-ωf = 2.50
-len = 250
+ωf = 1.5
+len = 200
 ω_range = range(ωi, ωf, length = len)
 
 
@@ -90,6 +90,7 @@ println("Max LLR range: ", extrema(history_max_llr))
 
 using CairoMakie
 
+lab_args = (;yticklabelsize = 20, xticklabelsize = 20, ylabelsize = 25, xlabelsize = 25)
 # Collect all basin labels that appear across all steps
 all_labels = sort(collect(reduce(union, keys.(history_volumes))))
 # Build per-label volume time series (missing → 0)
@@ -102,21 +103,29 @@ upper_band = history_mean_S .+ (3.0 .* sqrt.(history_var_S))
 lower_band = history_mean_S .- (3.0 .* sqrt.(history_var_S))
 
 # Global Entropy
-ax1 = Axis(fig[1, 1], title = "Mean Basin Entropy", ylabel = "Sb")
+ax1 = Axis(fig[1, 1];  ylabel = L"S_b", lab_args...)
 lines!(ax1, ω_range, history_mean_S, color = :black)
 xlims!(ax1, ωi, ωf)
 band!(ax1, ω_range, lower_band, upper_band,
         color = (:black, 0.2),
         label = "Confidence (±3σ)")
+Label(fig[1, 1, TopLeft()], "(a)",
+        fontsize = 25,
+        padding = (0, 50, -10, 0),
+        halign = :right)
 
 # Panic mode count (The Detector)
-ax2 = Axis(fig[2, 1], title = "Panic Tiles per Step", ylabel = "# alarms")
+ax2 = Axis(fig[2, 1];  ylabel = "# alarms", lab_args...)
 stairs!(ax2, ω_range, history_n_panics, color = :red)
 xlims!(ax2, ωi, ωf)
+Label(fig[2, 1, TopLeft()], "(b)",
+        fontsize = 25,
+        padding = (0, 50, -10, 0),
+        halign = :right)
 
 # Basin volumes — stacked band chart
 colors = Makie.wong_colors()
-ax3 = Axis(fig[3, 1], title = "Relative Basin Volumes", ylabel = "Volume fraction", xlabel = L"\omega", xlabelsize = 20)
+ax3 = Axis(fig[3, 1];  ylabel = "Volume fraction", xlabel = L"\omega", xlabelsize = 20, lab_args...)
 let lower = zeros(length(ω_range))
     for (i, k) in enumerate(all_labels)
         upper = lower .+ vol_series[k]
@@ -136,9 +145,14 @@ end
 axislegend(ax3, position = :rt)
 xlims!(ax3, ωi, ωf)
 ylims!(ax3, 0, 1)
+Label(fig[3, 1, TopLeft()], "(c)",
+        fontsize = 25,
+        padding = (0, 50, -10, 0),
+        halign = :right)
+
 
 # Entropy heatmap per box
 # ax4 = Axis(fig[4, 1], title = "Entropy per Box", xlabel = L"\omega", ylabel = "Box ID")
 # heatmap!(ax4, ω_range, 1:(n_tiles^2), full_history_S, colormap = :viridis)
 
-save(plotsdir("tiling_entropy_monitor_duffing.png"), fig)
+save(plotsdir("fig2.png"), fig)

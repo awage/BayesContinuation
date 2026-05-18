@@ -4,12 +4,13 @@ if !isdefined(Main, :rossler_Ksweep)
     include(scriptsdir("rossler_K_sweep_helper.jl"))
 end
 
+p_val = 0.2
 
 # ============================================================================
 # Fig 3b — S_B(K): MC vs single-run Bayes, and η(K) alarms, for each p
 # ============================================================================
 
-for p_val in p_vals
+# for p_val in p_vals
 
     params_mc = @strdict N_osc k_degree graph_seed p_val n_K_steps a_ros b_ros c_ros r_thresh T_transient T_measure n_mc
 
@@ -38,10 +39,9 @@ for p_val in p_vals
 
         # S_B(K): MC vs Bayes
         fig = Figure(size = (750, 400))
-        ax  = Axis(fig[1, 1],
-            yticklabelsize = 15, xticklabelsize = 15, ylabelsize = 20, xlabelsize = 20,
-            ylabel = L"S_B",
-            xlabel = L"K",
+        ax  = Axis(fig[1, 1];
+            ylabel = L"B_S",
+            xlabel = L"K", lab_args...
         )
         band!(ax, K_vec, sync_fracs .- mc_std, sync_fracs .+ mc_std, color = (:black, 0.2))
         lines!(ax, K_vec, sync_fracs, color = :black, linewidth = 2, label = "MC")
@@ -49,16 +49,20 @@ for p_val in p_vals
               color = (:red, 0.2))
         lines!(ax, K_vec, bayes_sync_fracs, color = :red, linewidth = 2, label = "Bayes")
         axislegend(ax; position = :lt)
-        ylims!(ax, 0, 1)
-        save(plotsdir(savename("rossler_sync_Ksweep_mc", (; p = p_val), "png")), fig)
+        ylims!(ax, 0.3, 1)
+        Label(fig[1, 1, TopLeft()], "(a)",
+                fontsize = 25,
+                padding = (0, 50, -10, 0),
+                halign = :right)
+        save(plotsdir("fig3a.png"), fig)
+        # save(plotsdir(savename("rossler_sync_Ksweep_mc", (; p = p_val), "png")), fig)
         println("Saved MC plot → rossler_sync_Ksweep_mc_p=$(p_val).png")
 
         # η(K): alarms
         fig = Figure(size = (750, 400))
-        ax  = Axis(fig[1, 1],
-            yticklabelsize = 15, xticklabelsize = 15, ylabelsize = 20, xlabelsize = 20,
+        ax  = Axis(fig[1, 1];
             ylabel = L"\eta  \text{(log Bayes factor)}",
-            xlabel = L"K",
+            xlabel = L"K", lab_args...
         )
         lines!(ax, K_vec, history_max_llr, color = :black, linewidth = 2)
         hlines!(ax, [0.0], color = :red, linestyle = :dash, linewidth = 1)
@@ -67,9 +71,14 @@ for p_val in p_vals
             scatter!(ax, K_vec[panic_idx], history_max_llr[panic_idx],
                      color = :red, markersize = 8, label = "panic")
         end
-        save(plotsdir(savename("rossler_sync_Ksweep_alarms", (; p = p_val), "png")), fig)
+        Label(fig[1, 1, TopLeft()], "(b)",
+                fontsize = 25,
+                padding = (0, 50, -10, 0),
+                halign = :right)
+        save(plotsdir("fig3b.png"), fig)
+        # save(plotsdir(savename("rossler_sync_Ksweep_alarms", (; p = p_val), "png")), fig)
 
     catch e
         @warn "MC sweep failed for p=$p_val" exception=e
     end
-end
+# end

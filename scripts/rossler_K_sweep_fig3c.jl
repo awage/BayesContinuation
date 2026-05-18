@@ -44,17 +44,23 @@ fit_curve = exp.(lin_model(collect(p_fine), coef(fit))) .+ 0.6
 # Plot
 # ============================================================================
 
-fig = Figure(size = (650, 400))
-ax  = Axis(fig[1, 1],
-    yticklabelsize = 15, xticklabelsize = 15, ylabelsize = 20, xlabelsize = 20,
+
+lab_args = (;yticklabelsize = 20, xticklabelsize = 20, ylabelsize = 25, xlabelsize = 25)
+fig = Figure(size = (750, 400))
+# fig = Figure(size = (650, 400))
+ax  = Axis(fig[1, 1];
     xlabel = L"p",
-    ylabel = L"\langle S_B\rangle_K",
+    ylabel = L"\langle B_S\rangle_K", lab_args...
 )
 lines!(ax,   p_values, mean_sync, color = :steelblue, linewidth = 2)
 scatter!(ax, p_values, mean_sync, color = :steelblue, markersize = 7)
 lines!(ax, collect(p_fine), fit_curve, color = :orange, linewidth = 2,
        linestyle = :dash, label = L"a e^{b p} + c")
-axislegend(ax; position = :rt)
+axislegend(ax; position = :rt, labelsize = 25 )
+Label(fig[1, 1, TopLeft()], "(c)",
+        fontsize = 25,
+        padding = (0, 50, -10, 0),
+        halign = :right)
 
 save(plotsdir("fig3c.png"), fig)
 println("Saved → rossler_avg_vs_p.png")
