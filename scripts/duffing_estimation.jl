@@ -155,4 +155,4 @@ Label(fig[3, 1, TopLeft()], "(c)",
 # ax4 = Axis(fig[4, 1], title = "Entropy per Box", xlabel = L"\omega", ylabel = "Box ID")
 # heatmap!(ax4, ω_range, 1:(n_tiles^2), full_history_S, colormap = :viridis)
 
-save(plotsdir("fig2.png"), fig)
+save(plotsdir("fig3.png"), fig)
