@@ -58,6 +58,7 @@ _parallel_allowed(::AttractorMapperFactory) = false
 
 include("inference_stuff.jl")
 include("bayes_entropy_est.jl")
+include("bayes_sampler.jl")
 
 # Mapper factory types and interface
 export MapperFactory, GenericFactory, AttractorMapperFactory
@@ -78,5 +79,9 @@ export build_mapper, update!
 
 # From bayes_entropy_est.jl
 export estimate_entropy
+
+# From bayes_sampler.jl
+export BayesianUpdateSampler, bayesian_tiling, sampler_history
+export InitialConditionSampler, generate_ics, update_sampler!, resampling_required
 
 end
