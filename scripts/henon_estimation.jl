@@ -104,7 +104,7 @@ function henon_vanilla_continuation(d)
     sampler = RandomICSampler(n_ics, region, 20260802)
 
     fractions, attractors = global_continuation(
-        RecurrencesFindAndMatch(bmap), henon_pcurve(a_range, b), sampler,
+        RecurrencesFindAndMatch(bmap; distance = Hausdorff(), threshold = Inf), henon_pcurve(a_range, b), sampler,
     )
 
     return @strdict fractions
@@ -132,7 +132,7 @@ data, file = produce_or_load(
     params,
     henon_bayes_continuation;
     prefix = "henon_bayes", storepatch = false,
-    suffix = "jld2", force = true,
+    suffix = "jld2", force = false,
     filename = hash
 )
 
@@ -209,7 +209,7 @@ data_vanilla, file_vanilla = produce_or_load(
     params_vanilla,
     henon_vanilla_continuation;
     prefix = "henon_vanilla", storepatch = false,
-    suffix = "jld2", force = false,
+    suffix = "jld2", force = true,
     filename = hash
 )
 
