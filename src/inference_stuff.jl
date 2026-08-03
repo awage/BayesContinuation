@@ -1,331 +1,256 @@
 """
-Computes Dirichlet Entropy where alpha is a Dictionary of {Label => Count}.
-Missing keys are assumed to have 0 mass (or handled via β in construction).
+inference_stuff.jl
+==================
+Estimators over the Dirichlet posteriors that `Attractors.BayesianUpdateSampler`
+maintains, one per box of its tiling.
+
+The sampler keeps those posteriors in `sampler.alphas :: Vector{Dict{Int, Float64}}`:
+`alphas[i][k]` is the pseudo-count box `i` assigns to attractor `k`, so
+`alphas[i][k] / Σ alphas[i]` is that box's estimate of the fraction of itself that
+belongs to basin `k`. Every function below is a functional of those numbers alone.
+
+Nothing here samples, tiles, tests or continues anything — the tiling, the point
+generation, the log Bayes factor η, the panic/re-sample logic and the per-parameter
+record of `alphas`/`etas` all live in `Attractors/src/continuation/sampler_api.jl`.
+What is *not* upstream, and is the reason this file exists, are the basin-entropy
+estimators and their variances.
+
+The file has two halves. The first takes one *slice* — the state of the boxes at a
+single parameter — and is what the estimators are actually defined on. The second
+maps those over the sampler's history to give the series a figure needs; see
+[`bayes_estimates`](@ref).
 """
-function bayes_entropy(alpha::Dict{Int, Float64})
-    # alpha_0 is the sum of all pseudo-counts in the dictionary
+
+# ===========================================================================
+# Part 1 — one slice: the boxes at a single parameter
+# ===========================================================================
+
+# ---------------------------------------------------------------------------
+# Entropy of a single box
+# ---------------------------------------------------------------------------
+
+"""
+    bayes_entropy(α) → Float64
+
+Posterior mean of the Shannon entropy of a Dirichlet(α) distribution,
+
+    E[S] = ψ(α₀ + 1) − Σₖ (αₖ/α₀) ψ(αₖ + 1),    α₀ = Σₖ αₖ
+
+`α` is a `label => pseudo-count` dictionary such as an entry of `sampler.alphas`.
+Labels absent from `α` carry no mass and do not contribute.
+"""
+function bayes_entropy(alpha::AbstractDict{Int, Float64})
     a0 = sum(values(alpha))
-    
-    # Term 1: digamma(sum + 1)
-    term1 = digamma(a0 + 1)
-    
-    # Term 2: sum (alpha_i / alpha_0) * digamma(alpha_i + 1)
+    a0 > 0 || return 0.0
     term2 = 0.0
     for val in values(alpha)
         term2 += (val / a0) * digamma(val + 1)
     end
-    
-    return term1 - term2
+    return digamma(a0 + 1) - term2
 end
 
-
 """
-    bayes_entropy_variance_exact(alpha)
+    bayes_entropy_variance(α) → Float64
 
-Computes the EXACT variance of the Shannon entropy for a Dirichlet distribution.
-Ref: Wolpert & Wolf (1995), Theorem 16 (Eq 16.1 and 16.2).
-Uses an O(K) algebraic reduction to avoid K^2 cross-term summations.
+Exact posterior variance of the Shannon entropy under Dirichlet(α), following
+Wolpert & Wolf (1995), Theorem 16 (Eqs. 16.1–16.2). The `i ≠ j` cross terms are
+summed with the `(Σ)² − Σ(·²)` trick, so the cost is O(K) rather than O(K²).
+
+`α` may be a `label => pseudo-count` dictionary or a plain vector of pseudo-counts.
 """
-function bayes_entropy_variance(alpha::Union{Vector{Float64}, Dict{Int, Float64}})
-    vals = isa(alpha, Dict) ? collect(values(alpha)) : alpha
+function bayes_entropy_variance(alpha::Union{AbstractVector{Float64}, AbstractDict{Int, Float64}})
+    vals = isa(alpha, AbstractDict) ? collect(values(alpha)) : alpha
     a0 = sum(vals)
-    
-    if a0 <= 0
-        return 0.0
-    end
-    
-    # Precompute common polygamma terms for the total sum a0
+    a0 > 0 || return 0.0
+
+    # Polygamma terms of the total, needed by every summand
     psi_a0_1 = digamma(a0 + 1)
     psi_a0_2 = digamma(a0 + 2)
     tri_a0_2 = trigamma(a0 + 2)
-    
-    E_S = 0.0      # Expected Entropy: E[S]
-    sum_A = 0.0    # For the O(K) cross-term trick
-    sum_A2 = 0.0   # For the O(K) cross-term trick
-    sum_a_sq = 0.0 # Sum of alpha_i squared
-    D = 0.0        # Diagonal terms
-    
+
+    E_S = 0.0      # E[S], Eq. 16.1
+    sum_A = 0.0    # Σ Aᵢ, for the cross-term trick
+    sum_A2 = 0.0   # Σ Aᵢ²
+    sum_a_sq = 0.0 # Σ αᵢ²
+    D = 0.0        # diagonal (i == j) terms of Eq. 16.2
+
     for a_i in vals
-        if a_i > 0
-            # 1. Expectation Term (Eq 16.1)
-            E_S -= (a_i / a0) * (digamma(a_i + 1) - psi_a0_1)
-            
-            # 2. Cross Term Components (for Eq 16.2 i != j)
-            A_i = a_i * (digamma(a_i + 1) - psi_a0_2)
-            sum_A += A_i
-            sum_A2 += A_i^2
-            sum_a_sq += a_i^2
-            
-            # 3. Diagonal Terms (for Eq 16.2 i == j)
-            psi_ai_2 = digamma(a_i + 2)
-            tri_ai_2 = trigamma(a_i + 2)
-            
-            term_D = (a_i * (a_i + 1)) / (a0 * (a0 + 1)) * 
-                     ( (psi_ai_2 - psi_a0_2)^2 + tri_ai_2 - tri_a0_2 )
-            D += term_D
-        end
+        a_i > 0 || continue
+        E_S -= (a_i / a0) * (digamma(a_i + 1) - psi_a0_1)
+
+        A_i = a_i * (digamma(a_i + 1) - psi_a0_2)
+        sum_A += A_i
+        sum_A2 += A_i^2
+        sum_a_sq += a_i^2
+
+        D += (a_i * (a_i + 1)) / (a0 * (a0 + 1)) *
+             ((digamma(a_i + 2) - psi_a0_2)^2 + trigamma(a_i + 2) - tri_a0_2)
     end
-    
-    # Combine the Cross Terms using the (Sum)^2 - Sum(Squares) trick
-    cross_part1 = sum_A^2 - sum_A2
-    cross_part2 = -tri_a0_2 * (a0^2 - sum_a_sq)
-    C = (cross_part1 + cross_part2) / (a0 * (a0 + 1))
-    
-    # Exact Second Moment E[S^2]
-    E_S2 = C + D
-    
-    # Variance = E[S^2] - (E[S])^2
-    # Ensure it doesn't drop trivially below 0 due to float imprecision
-    return max(0.0, E_S2 - E_S^2) 
+
+    C = ((sum_A^2 - sum_A2) - tri_a0_2 * (a0^2 - sum_a_sq)) / (a0 * (a0 + 1))
+    # Var = E[S²] − E[S]²; clamp away float noise around 0
+    return max(0.0, (C + D) - E_S^2)
 end
 
-mutable struct LocalBoxObserver
-    # Physical boundaries per dimension: [(x_min, x_max), (y_min, y_max), ...]
-    physical_bounds::Vector{Tuple{Float64, Float64}}
-    # Dictionary of Dirichlet parameters: Label => Weight
-    alpha::Dict{Int, Float64}
-    last_entropy::Float64
-    last_llr::Float64
-end
-
-function create_observer(phys_bounds, β::Float64)
-    # Initialize with empty dictionary (conceptual mass is β everywhere)
-    return LocalBoxObserver(
-        phys_bounds,
-        Dict{Int, Float64}(),
-        0.0,
-        0.0
-    )
-end
+# ---------------------------------------------------------------------------
+# Aggregation over the boxes of a tiling
+# ---------------------------------------------------------------------------
 
 """
-Updates the priors of an observer based on a dense initialization (the initial basins).
+    box_entropies(alphas) → Vector{Float64}
+
+`bayes_entropy` of every box, in the order of `sampler.alphas`.
 """
-function initialize_prior_from_data!(obs::LocalBoxObserver, data_view::AbstractArray, β::Float64)
-    # Clear current
-    empty!(obs.alpha)
-    
-    # Count occurrences in the dense data view
-    counts = Dict{Int, Int}()
-    for val in data_view
-        counts[val] = get(counts, val, 0) + 1
-    end
-    
-    # Convert to alpha = count + β
-    for (k, c) in counts
-        obs.alpha[k] = c + β
-    end
-    
-    # Initialize stats
-    obs.last_entropy = bayes_entropy(obs.alpha)
-end
-
-function initialize_prior_from_data!(obs::LocalBoxObserver, mapper, β::Float64, N::Int64;
-                                     parallel=false)
-    empty!(obs.alpha)
-    labels = Vector{Int}(undef, N)
-    if parallel
-        Threads.@threads for i in 1:N
-            labels[i] = mapper(pick_random_point(obs))
-        end
-    else
-        for i in 1:N
-            labels[i] = mapper(pick_random_point(obs))
-        end
-    end
-    new_counts = Dict{Int, Int}()
-    for label in labels
-        new_counts[label] = get(new_counts, label, 0) + 1
-    end
-    for (k, c) in new_counts
-        obs.alpha[k] = c + β
-    end
-end
-
-# Thread-safe overload: one mapper per thread avoids races on shared mutable
-# buffers (e.g. the Lx cache in RosslerParams used by mul! in the ODE rhs).
-function initialize_prior_from_data!(obs::LocalBoxObserver, mappers::Vector, β::Float64, N::Int64)
-    empty!(obs.alpha)
-    labels = Vector{Int}(undef, N)
-    Threads.@threads for i in 1:N
-        labels[i] = mappers[Threads.threadid()](pick_random_point(obs))
-    end
-    new_counts = Dict{Int, Int}()
-    for label in labels
-        new_counts[label] = get(new_counts, label, 0) + 1
-    end
-    for (k, c) in new_counts
-        obs.alpha[k] = c + β
-    end
-end
+box_entropies(alphas::AbstractVector{<:AbstractDict{Int, Float64}}) =
+    [bayes_entropy(a) for a in alphas]
 
 """
-    basin_volumes(observers)
+    mean_entropy(alphas) → Float64
 
-Estimates the relative volume of each basin as the mean expected probability
-of each attractor label across all observer tiles. Each tile has equal physical
-area, so the global fraction of phase space belonging to basin k is:
-
-    V_k ≈ (1/N_tiles) Σ_i  α_{i,k} / α_{i,0}
-
-Returns a `Dict{Int,Float64}` mapping label → relative volume (values sum to 1).
+Basin entropy of the whole region: the mean over boxes of their posterior mean
+entropy. All boxes of a `BayesianUpdateSampler` have the same volume, so an
+unweighted mean is the right aggregation.
 """
-function basin_volumes(observers::Vector{LocalBoxObserver})
-    all_labels = Set{Int}()
-    for obs in observers
-        union!(all_labels, keys(obs.alpha))
-    end
+mean_entropy(alphas::AbstractVector{<:AbstractDict{Int, Float64}}) =
+    isempty(alphas) ? 0.0 : sum(bayes_entropy, alphas) / length(alphas)
 
+"""
+    mean_entropy_variance(alphas) → Float64
+
+Variance of [`mean_entropy`](@ref). The boxes are treated as independent, so the
+variance of their mean is `(1/N²) Σᵢ Var[Sᵢ]`.
+"""
+function mean_entropy_variance(alphas::AbstractVector{<:AbstractDict{Int, Float64}})
+    n = length(alphas)
+    n > 0 || return 0.0
+    return sum(bayes_entropy_variance, alphas) / n^2
+end
+
+# ---------------------------------------------------------------------------
+# Basin volumes
+# ---------------------------------------------------------------------------
+
+"""
+    basin_volumes(alphas) → Dict{Int, Float64}
+
+Relative volume of each basin, as believed by the priors:
+
+    V_k ≈ (1/N) Σᵢ αᵢₖ / αᵢ₀
+
+Values sum to 1. This is the *prior-based* estimate, which carries the memory of
+previous parameters through the sampler's forgetting factor λ. It is not the same
+quantity as the `fractions_cont` returned by a global continuation, which
+`Attractors.weighted_fractions` computes from the labels of the current parameter
+only; comparing the two is a useful check that the priors have kept up.
+"""
+function basin_volumes(alphas::AbstractVector{<:AbstractDict{Int, Float64}})
     vol = Dict{Int, Float64}()
-    n = length(observers)
-    for k in all_labels
-        total = 0.0
-        for obs in observers
-            a0 = sum(values(obs.alpha))
-            if a0 > 0
-                total += get(obs.alpha, k, 0.0) / a0
-            end
+    n = length(alphas)
+    n > 0 || return vol
+    for alpha in alphas
+        a0 = sum(values(alpha))
+        a0 > 0 || continue
+        for (k, a) in alpha
+            vol[k] = get(vol, k, 0.0) + a / (a0 * n)
         end
-        vol[k] = total / n
     end
     return vol
 end
 
-
 """
-    basin_volume_variance(observers)
+    basin_volume_variance(alphas) → Dict{Int, Float64}
 
-Returns the Dirichlet posterior variance of each basin volume, averaged over tiles.
-
-For a single tile with Dirichlet(α), the variance of proportion p_k is:
-
-    Var[p_k] = α_k (α₀ − α_k) / (α₀² (α₀ + 1))
-
-For N independent tiles whose contributions are averaged:
-
-    Var[V_k] = (1/N²) Σ_i Var_i[p_{i,k}]
-
-Returns a `Dict{Int,Float64}` mapping label → variance.
+Posterior variance of each entry of [`basin_volumes`](@ref). Within one box,
+Dirichlet(α) gives `Var[pₖ] = αₖ(α₀ − αₖ) / (α₀²(α₀ + 1))`; the boxes are averaged
+as independent contributions, so `Var[V_k] = (1/N²) Σᵢ Var[pᵢₖ]`.
 """
-function basin_volume_variance(observers::Vector{LocalBoxObserver})
-    all_labels = Set{Int}()
-    for obs in observers
-        union!(all_labels, keys(obs.alpha))
-    end
-
+function basin_volume_variance(alphas::AbstractVector{<:AbstractDict{Int, Float64}})
     var_vol = Dict{Int, Float64}()
-    n = length(observers)
-    for k in all_labels
-        total_var = 0.0
-        for obs in observers
-            a0 = sum(values(obs.alpha))
-            if a0 > 0
-                ak = get(obs.alpha, k, 0.0)
-                total_var += ak * (a0 - ak) / (a0^2 * (a0 + 1))
-            end
+    n = length(alphas)
+    n > 0 || return var_vol
+    for alpha in alphas
+        a0 = sum(values(alpha))
+        a0 > 0 || continue
+        for (k, ak) in alpha
+            var_vol[k] = get(var_vol, k, 0.0) + ak * (a0 - ak) / (a0^2 * (a0 + 1) * n^2)
         end
-        var_vol[k] = total_var / n^2
     end
     return var_vol
 end
 
 """
-Pick a random point inside the observer's N-dimensional box.
+    panic_boxes(etas) → Vector{Int}
+
+The boxes that asked for a dense re-sample at a parameter, given their log Bayes
+factors. An alarm is a *negative* η: the box's history explains its data worse than
+no history at all.
 """
-function pick_random_point(obs::LocalBoxObserver)
-    return [xmin + rand() * (xmax - xmin) for (xmin, xmax) in obs.physical_bounds]
+panic_boxes(etas::AbstractVector{<:Real}) = findall(<(0), etas)
+
+# ===========================================================================
+# Part 2 — the whole sweep: series over a sampler's history
+# ===========================================================================
+
+"""
+    bayes_estimates(sampler::BayesianUpdateSampler) → NamedTuple
+    bayes_estimates(history) → NamedTuple
+
+Every quantity the figures need, computed from the per-parameter record the sampler
+kept during a [`global_continuation`](@ref). The sampler must have been built with
+`history = true`; `history` may also be given directly as the
+`(; alphas, etas)` of `Attractors.sampler_history`.
+
+This is the whole reason the continuation itself does not have to live here: run
+`global_continuation` unmodified, then map the Part 1 estimators over the history.
+
+Returns, with one entry per parameter of the `pcurve` that was swept:
+
+- `mean_S`, `var_S`: basin entropy of the region and its variance, from
+  [`mean_entropy`](@ref) and [`mean_entropy_variance`](@ref).
+- `min_eta`: the smallest η over the boxes — the alarm signal. A *maximum* would
+  track the quietest box and never signal anything.
+- `n_panics`, `panic_boxes`: how many boxes, and which, raised the alarm.
+- `volumes`, `vol_var`: [`basin_volumes`](@ref) and [`basin_volume_variance`](@ref)
+  of the priors.
+- `full_S`, `full_eta`: the `(n_parameters, n_boxes)` matrices behind the aggregates,
+  for when the spatial distribution of the alarm matters.
+"""
+function bayes_estimates(history::NamedTuple)
+    alphas, etas = history.alphas, history.etas
+    isempty(alphas) && throw(ArgumentError(
+        "the sampler kept no history; build it with `BayesianUpdateSampler(...; history = true)`"
+    ))
+    n_p, n_b = length(alphas), length(first(alphas))
+    return (;
+        mean_S = [mean_entropy(a) for a in alphas],
+        var_S = [mean_entropy_variance(a) for a in alphas],
+        min_eta = [minimum(e) for e in etas],
+        n_panics = [count(<(0), e) for e in etas],
+        panic_boxes = [panic_boxes(e) for e in etas],
+        volumes = [basin_volumes(a) for a in alphas],
+        vol_var = [basin_volume_variance(a) for a in alphas],
+        full_S = [bayes_entropy(alphas[i][j]) for i in 1:n_p, j in 1:n_b],
+        full_eta = [etas[i][j] for i in 1:n_p, j in 1:n_b],
+    )
 end
 
-"""
-    generate_tiling(global_bounds, n_tiles, β)
+bayes_estimates(sampler::BayesianUpdateSampler) = bayes_estimates(sampler_history(sampler))
 
-Creates an N-dimensional tiling of `n_tiles` per dimension, yielding `n_tiles^D` observers
-where `D = length(global_bounds)`. Each element of `global_bounds` is a `(min, max)` pair.
 """
-function generate_tiling(global_bounds, n_tiles, β)
-    D = length(global_bounds)
-    edges = [collect(range(Float64(lo), Float64(hi); length = n_tiles + 1))
-             for (lo, hi) in global_bounds]
+    volume_series(volumes, labels = ...) → Dict{Int, Vector{Float64}}
 
-    observers = Vector{LocalBoxObserver}()
-    for idx in CartesianIndices(ntuple(_ -> n_tiles, D))
-        bounds = [(edges[d][idx[d]], edges[d][idx[d]+1]) for d in 1:D]
-        push!(observers, create_observer(bounds, β))
-    end
-    return observers
+Turn the per-parameter `volumes` dictionaries of [`bayes_estimates`](@ref) into one
+time series per basin, filling with `0.0` the parameters at which a basin does not
+exist. This is the shape a stacked band plot wants. `Attractors.continuation_series`
+does the same for the `fractions_cont` of a continuation, but fills with `NaN`.
+
+The `fractions_cont` of a continuation have the same shape and work here too. They may
+arrive as a `Vector{Dict}` rather than a `Vector{Dict{Int, Float64}}` (a JLD2 round trip
+loses the element type), hence the loose signature.
+"""
+function volume_series(volumes::AbstractVector{<:AbstractDict},
+                       labels = sort!(collect(reduce(union, keys.(volumes)))))
+    return Dict{Int, Vector{Float64}}(
+        Int(k) => [Float64(get(v, k, 0.0)) for v in volumes] for k in labels
+    )
 end
-
-
-"""
-    log_marginal_likelihood(counts, alpha, β)
-
-Computes the log-marginal likelihood (log-evidence) of observed counts `c`
-under a Dirichlet-Multinomial model with prior `alpha`.
-
-    L(α) = lnΓ(α₀) − lnΓ(N_s + α₀) + Σᵢ [lnΓ(cᵢ + αᵢ) − lnΓ(αᵢ)]
-
-where α₀ = Σ αᵢ and N_s = Σ cᵢ. Categories not present in `alpha` get
-the base prior `β`.
-"""
-function log_marginal_likelihood(new_counts::Dict{Int, Int}, alpha::Dict{Int, Float64}, β::Float64)
-    all_keys = union(keys(new_counts), keys(alpha))
-
-    alpha_0 = 0.0
-    N_s = sum(values(new_counts))
-    log_lik = 0.0
-
-    for k in all_keys
-        a_k = get(alpha, k, β)
-        c_k = get(new_counts, k, 0)
-        alpha_0 += a_k
-        log_lik += loggamma(c_k + a_k) - loggamma(a_k)
-    end
-
-    log_lik += loggamma(alpha_0) - loggamma(N_s + alpha_0)
-    return log_lik
-end
-
-"""
-    compute_log_bayes_factor(new_counts, alpha, β)
-
-Computes the Log Bayes Factor η comparing two hypotheses:
-  - H_hist (Stability): data generated by current prior `alpha`
-  - H_reset (Crisis): data generated by uninformative prior αᵢ = β
-
-    η = L(α_prior) − L(α_reset)
-
-When η < 0, the uninformative model explains the data better than the
-historical record, indicating a structural change.
-
-Returns: η (Float64)
-"""
-function compute_log_bayes_factor(new_counts::Dict{Int, Int}, alpha::Dict{Int, Float64}, β::Float64)
-    # Log-evidence under historical prior
-    L_hist = log_marginal_likelihood(new_counts, alpha, β)
-
-    # Log-evidence under reset (uninformative) prior: α_i = β for all categories
-    all_keys = union(keys(new_counts), keys(alpha))
-    alpha_reset = Dict{Int, Float64}(k => β for k in all_keys)
-    L_reset = log_marginal_likelihood(new_counts, alpha_reset, β)
-
-    return L_hist - L_reset
-end
-
-"""
-    test_continuity(new_counts, alpha, β)
-
-Tests whether the sparse sample is consistent with the prior (H₀: no structural change)
-using the log-marginal Bayes Factor.
-
-Returns: (reject::Bool, η::Float64, 0.0)
-  - reject = true  → Panic Mode: η < 0, the uninformative model fits better
-  - reject = false → Continue: the historical prior explains the data
-  - Third element is a placeholder for backward compatibility (no p-value in this test)
-"""
-function test_continuity(new_counts::Dict{Int, Int}, alpha::Dict{Int, Float64}, β::Float64;
-                         gamma::Float64=0.01)
-    eta = compute_log_bayes_factor(new_counts, alpha, β)
-    reject = eta < 0.0
-    return reject, eta, 0.0
-end
-

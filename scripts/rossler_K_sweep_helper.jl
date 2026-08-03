@@ -1,3 +1,34 @@
+"""
+rossler_K_sweep_helper.jl
+=========================
+Shared layer for the Rössler figures 4a–4c: the network, the binary basin map, and the
+two sweeps over the coupling `K` at fixed rewiring probability `p`.
+
+    ẋᵢ = −yᵢ − zᵢ − K (L x)ᵢ       ← diffusive coupling through x
+    ẏᵢ =  xᵢ + a yᵢ
+    żᵢ =  b  + zᵢ(xᵢ − c)
+
+`rossler_Ksweep` runs one `global_continuation` per network realisation, monitored by a
+`BayesianUpdateSampler`, and averages the estimators over the realisations.
+`rossler_Ksweep_montecarlo` is the brute-force reference for the same curve: a fixed,
+large sample of initial conditions at every `K`, no monitoring and no priors.
+
+## The basin map is binary
+
+There are no attractors to find here, and no reason to find them: the question is
+whether a trajectory synchronizes, which is one bit per initial condition. So
+`RosslerSyncMap` integrates for a fixed time, measures the Golomb–Rinzel coherence, and
+returns `1` (synchronous) or `-1` (not). `extract_attractors` returns nothing, which is
+also what makes the IDs safe in a continuation: with no sets to compare there is no
+matching, and `1` means synchrony at every `K` by construction.
+
+Sweeping `K` is then an ordinary continuation — `RosslerParams` is mutable, so the
+`pcurve` hands `set_parameters!` a new `K` at each step of one long-lived system. The
+interval swept is the MSF prediction `Iₛ = (α₁/λ_min, α₂/λ_max)`, where the synchronous
+state is linearly stable; how much of state space actually reaches it is what the sweep
+measures.
+"""
+
 using DrWatson
 @quickactivate "BayesContinuation"
 using LinearAlgebra
@@ -5,7 +36,7 @@ using Statistics
 using Random
 using SparseArrays
 using Graphs
-using OrdinaryDiffEq
+using OrdinaryDiffEq: Vern9
 using Attractors
 using CairoMakie
 using LaTeXStrings
@@ -14,31 +45,17 @@ using ProgressMeter
 include(srcdir("BayesContinuation.jl"))
 using .BayesContinuation
 
-# ============================================================================
-# Rössler oscillator network — Menck & Kurths (2013) setup
-#
-# ODE for node i:
-#   ẋᵢ = −yᵢ − zᵢ − K (L x)ᵢ       ← diffusive coupling through x
-#   ẏᵢ =  xᵢ + a yᵢ
-#   żᵢ =  b  + zᵢ(xᵢ − c)
-#
-# Synchronous state: all nodes on the same Rössler trajectory.
-# MSF theory (Pecora & Carroll) gives the stability interval:
-#   K ∈ Iₛ = (α₁/λ_min, α₂/λ_max)
-# with α₁ = 0.1232, α₂ = 4.663, a=0.2, b=0.2, c=9.0 (Boccaletti et al. 2002)
-#
-# Synchronizability: R = λ_max/λ_min < α₂/α₁ ≈ 37.85  (Iₛ non-empty)
-# ============================================================================
-
-MSF_α1   = 0.1232
-MSF_α2   = 4.663
-MSF_Rmax = MSF_α2 / MSF_α1    # ≈ 37.85
+# --- MSF constants for Rössler (a=0.2, b=0.2, c=9.0), Boccaletti et al. 2002 ---------
+const MSF_α1 = 0.1232
+const MSF_α2 = 4.663
+const MSF_Rmax = MSF_α2 / MSF_α1    # ≈ 37.85
 
 # ============================================================================
 # Rössler network ODE
 # ============================================================================
 
-struct RosslerParams
+# mutable: `set_parameters!` swaps `K` at every step of the continuation
+mutable struct RosslerParams
     N::Int
     a::Float64
     b::Float64
@@ -65,103 +82,116 @@ function rossler_network!(du, u, p, t)
     return nothing
 end
 
-function rossler_network_jac!(J, u, p, t)
-    (; N, a, b, c, K, L) = p
-    z = view(u, 2N+1:3N)
-
-    fill!(J, 0.0)
-    @inbounds for i in 1:N
-        J[i, N + i]  = -1.0
-        J[i, 2N + i] = -1.0
-        J[N + i, i]      = 1.0
-        J[N + i, N + i]  = a
-        J[2N + i, i]      = z[i]
-        J[2N + i, 2N + i] = u[i] - c
-    end
-
-    rows = rowvals(L)
-    vals = nonzeros(L)
-    @inbounds for col in 1:N
-        for idx in nzrange(L, col)
-            row = rows[idx]
-            J[row, col] += -K * vals[idx]
-        end
-    end
-    return nothing
-end
-
-# Golomb–Rinzel coherence measure (Golomb & Rinzel 1994):
+# Golomb–Rinzel coherence (Golomb & Rinzel 1994) of a T×N matrix of x-components:
 #   R = Var_t(x̄(t)) / mean_i(Var_t(xᵢ(t)))
 # R = 1 → perfect synchrony;  R ≈ 1/N → incoherent.
 function golomb_rinzel_coherence(X)
-    x_bar       = vec(mean(X; dims=2))
-    var_pbar    = var(x_bar)
-    mean_var_pi = mean(var(X; dims=1))
-    mean_var_pi < 1e-12 && return 1.0
-    return var_pbar / mean_var_pi
+    mean_var_i = mean(var(X; dims = 1))
+    mean_var_i < 1e-12 && return 1.0
+    return var(vec(mean(X; dims = 2))) / mean_var_i
 end
 
 # ============================================================================
-# Mapper: fixed network (L) and coupling (K) — returns 1 (sync) or 0
+# The basin map: binary, `1` = synchronous, `-1` = not
 # ============================================================================
 
-struct RosslerSyncMapper
+struct RosslerSyncMap{DS <: DynamicalSystem} <: BasinMap
+    ds::DS
     N::Int
     r_thresh::Float64
-    T_transient::Float64
-    T_measure::Float64
-    p::RosslerParams
-    f::ODEFunction
-    diverge_thresh::Float64
+    Ttr::Float64            # transient, discarded
+    T::Float64              # time the coherence is measured over
 end
 
-function (m::RosslerSyncMapper)(u0)
-    tspan  = (0.0, m.T_transient + m.T_measure)
-    saveat = range(m.T_transient, m.T_transient + m.T_measure; step = 1.0)
-    cb     = DiscreteCallback(
-        (u, t, integrator) -> any(abs.(u) .> m.diverge_thresh),
-        terminate!
+function (bmap::RosslerSyncMap)(u0)
+    # only the x-components are needed, and `container = Vector` keeps the record out of
+    # `SVector{N}`, which for a network of this size is not worth compiling
+    X, = trajectory(bmap.ds, bmap.T, u0;
+        Ttr = bmap.Ttr, Δt = 1.0, save_idxs = 1:bmap.N, container = Vector,
     )
-    prob = ODEProblem(m.f, collect(float(u0)), tspan, m.p)
-    sol  = solve(prob, AutoVern9(Rodas5P());
-                 reltol = 1e-9, maxiters = Int(1e8), callback = cb, saveat = saveat)
-    sol.retcode == ReturnCode.Terminated && return 0
-    X = reduce(hcat, sol.u)[1:m.N, :]'  # T × N  (x-components only)
-    R = golomb_rinzel_coherence(X)
-    isnan(R) && return 0
-    return R > m.r_thresh ? 1 : 0
+    # an integration that blew up says nothing about synchrony; `trajectory` pads the rest
+    # of the record with the last state, which could well look coherent
+    successful_step(bmap.ds) || return -1
+    R = golomb_rinzel_coherence(Matrix(X))
+    return (isnan(R) || R ≤ bmap.r_thresh) ? -1 : 1
 end
 
-# Trivial mapper — for linearly-unstable networks; always returns 0.
-struct TrivialMapper end
-(::TrivialMapper)(u0) = 0
+# No attractors: the two IDs come from the threshold, not from any set in state space.
+# This is what makes the map safe in a continuation — nothing to match, and nothing that
+# should be matched, since `1` means the same thing at every parameter.
+Attractors._extract_attractors(::RosslerSyncMap) = Dict{Int, StateSpaceSet}()
+Attractors.reset_mapper!(::RosslerSyncMap) = nothing
+
+"One basin map, carrying its own system — the continuation re-parameterises it in place."
+function sync_map(N, a, b, c, K, L, r_thresh, T_transient, T_measure)
+    par = RosslerParams(N, a, b, c, K, L)
+    diffeq = (alg = Vern9(), adaptive = false, dt = 0.1, maxiters = Int(1e8))
+    ds = CoupledODEs(rossler_network!, zeros(3 * N), par; diffeq)
+    return RosslerSyncMap(ds, N, r_thresh, T_transient, T_measure)
+end
+
+# The region the initial conditions are drawn from. A `Tuple` of pairs, not a `Vector`:
+# the region's dimension has to be in its type.
+global_region(N) = Tuple(vcat(
+    [(-12.0, 12.0) for _ in 1:N],
+    [(-12.0, 12.0) for _ in 1:N],
+    [( -8.0, 35.0) for _ in 1:N],
+))
 
 # ============================================================================
-# Helpers: network construction and mapper factory
+# Network: the WS graph, and the MSF interval to sweep `K` over
 # ============================================================================
 
+"""
+Laplacian of the WS graph at rewiring probability `p_val`, and the `K` range spanning its
+MSF interval `Iₛ`. Returns `nothing` if the network cannot synchronize at any `K`.
+"""
 function get_network_and_coupling(N, k_deg, p_val, graph_seed, n_K_steps)
-    g     = watts_strogatz(N, k_deg, p_val; rng = Random.Xoshiro(graph_seed))
-    L     = laplacian_matrix(g)
-    λs    = sort(real.(eigvals(Matrix(L))))
-    λs_nz = filter(>(1e-10), λs)
-    isempty(λs_nz) && return nothing
-    λ_min = first(λs_nz)
-    λ_max = last(λs_nz)
-    R     = λ_max / λ_min
-    K_lo  = MSF_α1 / λ_min
-    K_hi  = MSF_α2 / λ_max
-    (R >= MSF_Rmax || K_lo >= K_hi) && return nothing
-    K_range = range(K_lo, K_hi; length = n_K_steps)
-    return L, K_range
+    g = watts_strogatz(N, k_deg, p_val; rng = Xoshiro(graph_seed))
+    L = Float64.(laplacian_matrix(g))
+    λs = filter(>(1e-10), sort(real.(eigvals(Matrix(L)))))
+    isempty(λs) && return nothing
+    λ_min, λ_max = first(λs), last(λs)
+    K_lo, K_hi = MSF_α1 / λ_min, MSF_α2 / λ_max
+    (λ_max / λ_min >= MSF_Rmax || K_lo >= K_hi) && return nothing
+    return L, range(K_lo, K_hi; length = n_K_steps)
 end
 
-function rossler_mapper_factory(N, a, b, c, L,
-                                r_thresh, T_transient, T_measure;
-                                diverge_thresh = 1e4)
-    f = ODEFunction(rossler_network!; jac = rossler_network_jac!)
-    return K_val -> RosslerSyncMapper(N, r_thresh, T_transient, T_measure,
-                                      RosslerParams(N, a, b, c, K_val, L), f, diverge_thresh)
+# ============================================================================
+# One monitored sweep over `K`, on one network
+# ============================================================================
+
+function ksweep_once(L, K_range, N, a, b, c, r_thresh, T_transient, T_measure,
+                     sparse_n, dense_n, n_tiles, λ, β)
+    bmap = sync_map(N, a, b, c, first(K_range), L, r_thresh, T_transient, T_measure)
+
+    # `history = true` is what makes the estimators recoverable afterwards: without it
+    # the sampler overwrites `alphas` and `etas` at every parameter.
+    sampler = BayesianUpdateSampler(global_region(N), n_tiles;
+        sparse_n, dense_n, λ, β, seed = 20260802, history = true,
+    )
+
+    pcurve = [Dict(:K => K) for K in K_range]
+
+    # The matcher is never called (no attractors), so its configuration is irrelevant.
+    fractions, attractors = global_continuation(
+        AttractorSeedContinueMatch(bmap), pcurve, sampler,
+    )
+
+    est = bayes_estimates(sampler)
+    return (; fractions, K = collect(K_range),
+        est.mean_S, est.var_S, est.min_eta, est.n_panics,
+        est.volumes, est.vol_var, est.full_S, est.full_eta,
+    )
+end
+
+"Average, per parameter, a series of `Dict`s over realisations; a missing label counts 0."
+function average_dict_series(series)
+    n = length(series)
+    return map(eachindex(first(series))) do i
+        labels = reduce(union, (keys(s[i]) for s in series))
+        Dict(k => sum(get(s[i], k, 0.0) for s in series) / n for k in labels)
+    end
 end
 
 # ============================================================================
@@ -171,138 +201,63 @@ end
 function rossler_Ksweep(d)
     @unpack N_osc, k_degree, graph_seed, n_avg, p_val, n_K_steps,
             a_ros, b_ros, c_ros, r_thresh, T_transient, T_measure,
-            sparse_n, dense_n, n_tiles, λ = d
+            sparse_n, dense_n, n_tiles, λ, β = d
 
-    global_bounds = vcat(
-        [(-12.0, 12.0) for _ in 1:N_osc],
-        [(-12.0, 12.0) for _ in 1:N_osc],
-        [( -8.0, 35.0) for _ in 1:N_osc],
-    )
-    params = @strdict sparse_n dense_n n_tiles global_bounds λ
-
-    acc_mean_S   = nothing
-    acc_var_S    = nothing
-    acc_max_llr  = nothing
-    acc_n_panics = nothing
-    acc_full_S   = nothing
-    acc_full_llr = nothing
-    acc_volumes  = nothing
-    acc_vol_var  = nothing
-    acc_K        = nothing
-    n_valid      = 0
-
-    for seed_offset in 0:(n_avg - 1)
-        seed   = graph_seed + seed_offset
-        result = get_network_and_coupling(N_osc, k_degree, p_val, seed, n_K_steps)
-        isnothing(result) && continue
-
-        L, K_range = result
-        println("p=$p_val  seed=$seed  Iₛ=[$(round(first(K_range), digits=3)), $(round(last(K_range), digits=3))]")
-
-        get_map = rossler_mapper_factory(
-            N_osc, a_ros, b_ros, c_ros, L,
-            r_thresh, T_transient, T_measure
-        )
-
-        res        = estimate_entropy(params, K_range, GenericFactory(get_map))
-        h_mean_S   = res.history_mean_S
-        h_var_S    = res.history_var_S
-        h_max_llr  = res.history_max_llr
-        h_n_panics = res.history_n_panics
-        fh_S       = res.full_history_S
-        fh_llr     = res.full_history_llr
-        h_volumes  = res.history_volumes
-        h_vol_var  = res.history_vol_var
-        K_vec      = collect(K_range)
-
-        if n_valid == 0
-            acc_mean_S   = h_mean_S
-            acc_var_S    = h_var_S
-            acc_max_llr  = h_max_llr
-            acc_n_panics = float.(h_n_panics)
-            acc_full_S   = fh_S
-            acc_full_llr = fh_llr
-            acc_volumes  = [Dict(kv for kv in hv) for hv in h_volumes]
-            acc_vol_var  = [Dict(kv for kv in vv) for vv in h_vol_var]
-            acc_K        = K_vec
-        else
-            acc_mean_S   .+= h_mean_S
-            acc_var_S    .+= h_var_S
-            acc_max_llr  .+= h_max_llr
-            acc_n_panics .+= h_n_panics
-            acc_full_S   .+= fh_S
-            acc_full_llr .+= fh_llr
-            acc_K        .+= K_vec
-            for (i, hv) in enumerate(h_volumes)
-                for (k, v) in hv
-                    acc_volumes[i][k] = get(acc_volumes[i], k, 0.0) + v
-                end
-            end
-            for (i, vv) in enumerate(h_vol_var)
-                for (k, v) in vv
-                    acc_vol_var[i][k] = get(acc_vol_var[i], k, 0.0) + v
-                end
-            end
-        end
-        n_valid += 1
+    runs = []
+    for seed in graph_seed .+ (0:(n_avg - 1))
+        net = get_network_and_coupling(N_osc, k_degree, p_val, seed, n_K_steps)
+        # a network with no MSF interval has nothing to sweep over
+        isnothing(net) && continue
+        L, K_range = net
+        println("p=$p_val  seed=$seed  Iₛ=[$(round(first(K_range), digits = 3)), " *
+                "$(round(last(K_range), digits = 3))]")
+        push!(runs, ksweep_once(L, K_range, N_osc, a_ros, b_ros, c_ros,
+            r_thresh, T_transient, T_measure, sparse_n, dense_n, n_tiles, λ, β))
     end
+    isempty(runs) && error("p=$p_val → all $n_avg network realisations linearly unstable")
 
-    n_valid == 0 && error("p=$p_val → all $n_avg network realisations linearly unstable")
+    # Every realisation has its own `Iₛ`, so the `K` axis is averaged along with the rest.
+    mean_over_runs(f) = sum(f(r) for r in runs) ./ length(runs)
+    K_vec = mean_over_runs(r -> r.K)
+    K_range = range(first(K_vec), last(K_vec); length = n_K_steps)
 
-    acc_mean_S   ./= n_valid
-    acc_var_S    ./= n_valid
-    acc_max_llr  ./= n_valid
-    acc_n_panics ./= n_valid
-    acc_full_S   ./= n_valid
-    acc_full_llr ./= n_valid
-    acc_K        ./= n_valid
-    for hv in acc_volumes; for k in keys(hv); hv[k] /= n_valid; end; end
-    for vv in acc_vol_var; for k in keys(vv); vv[k] /= n_valid; end; end
-
-    K_range          = range(first(acc_K), last(acc_K); length = n_K_steps)
-    history_mean_S   = acc_mean_S
-    history_var_S    = acc_var_S
-    history_max_llr  = acc_max_llr
-    history_n_panics = acc_n_panics
-    full_history_S   = acc_full_S
-    full_history_llr = acc_full_llr
-    history_volumes  = acc_volumes
-    history_vol_var  = acc_vol_var
-
-    return @strdict(history_mean_S, history_var_S, history_max_llr,
-                    history_n_panics, full_history_S, full_history_llr,
-                    history_volumes, history_vol_var, K_range)
+    return @strdict(
+        K_range, n_valid = length(runs),
+        fractions = average_dict_series([r.fractions for r in runs]),
+        volumes = average_dict_series([r.volumes for r in runs]),
+        vol_var = average_dict_series([r.vol_var for r in runs]),
+        mean_S = mean_over_runs(r -> r.mean_S),
+        var_S = mean_over_runs(r -> r.var_S),
+        min_eta = mean_over_runs(r -> r.min_eta),
+        n_panics = mean_over_runs(r -> float.(r.n_panics)),
+        full_S = mean_over_runs(r -> r.full_S),
+        full_eta = mean_over_runs(r -> r.full_eta),
+    )
 end
 
 function rossler_Ksweep_montecarlo(d)
     @unpack N_osc, k_degree, graph_seed, p_val, n_K_steps,
-            a_ros, b_ros, c_ros, r_thresh, T_transient, T_measure,
-            n_mc = d
+            a_ros, b_ros, c_ros, r_thresh, T_transient, T_measure, n_mc = d
 
-    global_bounds = vcat(
-        [(-12.0, 12.0) for _ in 1:N_osc],
-        [(-12.0, 12.0) for _ in 1:N_osc],
-        [( -8.0, 35.0) for _ in 1:N_osc],
-    )
+    net = get_network_and_coupling(N_osc, k_degree, p_val, graph_seed, n_K_steps)
+    isnothing(net) && error("p=$p_val → linearly unstable, cannot run montecarlo")
+    L, K_range = net
+    println("p=$p_val  Iₛ=[$(round(first(K_range), digits = 3)), " *
+            "$(round(last(K_range), digits = 3))]")
 
-    result = get_network_and_coupling(N_osc, k_degree, p_val, graph_seed, n_K_steps)
-    isnothing(result) && error("p=$p_val → linearly unstable, cannot run montecarlo")
-    L, K_range = result
-    println("p=$p_val  Iₛ=[$(round(first(K_range), digits=3)), $(round(last(K_range), digits=3))]")
-
-    get_map    = rossler_mapper_factory(N_osc, a_ros, b_ros, c_ros, L, r_thresh, T_transient, T_measure)
+    region = global_region(N_osc)
     sync_fracs = zeros(length(K_range))
-
-    for (k_idx, K_val) in enumerate(K_range)
-        mappers = [get_map(K_val) for _ in 1:Threads.nthreads()]
-        hits    = zeros(Int, n_mc)
-        @showprogress @Threads.threads for i in 1:n_mc
-            tid     = Threads.threadid()
-            u0      = [lo + rand() * (hi - lo) for (lo, hi) in global_bounds]
-            hits[i] = mappers[tid](u0)
+    for (i, K) in enumerate(K_range)
+        # one map per thread: each carries its own integrator, which it mutates
+        bmaps = [sync_map(N_osc, a_ros, b_ros, c_ros, K, L,
+                          r_thresh, T_transient, T_measure) for _ in 1:Threads.nthreads()]
+        labels = zeros(Int, n_mc)
+        @showprogress @Threads.threads for j in 1:n_mc
+            u0 = [lo + rand() * (hi - lo) for (lo, hi) in region]
+            labels[j] = bmaps[Threads.threadid()](u0)
         end
-        sync_fracs[k_idx] = mean(hits)
-        println("  K=$(round(K_val, digits=4))  sync_frac=$(round(sync_fracs[k_idx], digits=3))")
+        sync_fracs[i] = count(==(1), labels) / n_mc
+        println("  K=$(round(K, digits = 4))  sync_frac=$(round(sync_fracs[i], digits = 3))")
     end
 
     return @strdict(sync_fracs, K_range)
@@ -323,14 +278,20 @@ T_transient = 100.0
 T_measure   = 200.0
 n_K_steps   = 50
 
+# Bayesian monitoring. `n_tiles` splits *every* dimension of the 3N-dimensional region,
+# so anything above 1 here means `n_tiles^(3N)` boxes.
 λ        = 0.7
+β        = 0.5
 sparse_n = 20
 dense_n  = 200
 n_tiles  = 1
-n_avg    = 10
-n_mc     = 500
+
+n_avg = 10      # network realisations averaged over
+n_mc  = 500     # initial conditions per `K` in the Monte Carlo reference
 
 p_vals = sort(unique(vcat(
     range(0.0,  0.15, step = 0.01),   # fine grid in transition region
     range(0.20, 1.00, step = 0.05),   # coarse grid elsewhere
 )))
+
+lab_args = (; yticklabelsize = 20, xticklabelsize = 20, ylabelsize = 25, xlabelsize = 25)
