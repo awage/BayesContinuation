@@ -30,20 +30,20 @@ measures.
 """
 
 using DrWatson
-@quickactivate "BayesContinuation"
+@quickactivate "BayesianBasinTracking"
 using LinearAlgebra
 using Statistics
 using Random
 using SparseArrays
 using Graphs
 using OrdinaryDiffEq: Vern9
+using SpecialFunctions
 using Attractors
 using CairoMakie
 using LaTeXStrings
 using ProgressMeter
 
-include(srcdir("BayesContinuation.jl"))
-using .BayesContinuation
+include(srcdir("inference_stuff.jl"))
 
 # --- MSF constants for Rössler (a=0.2, b=0.2, c=9.0), Boccaletti et al. 2002 ---------
 const MSF_α1 = 0.1232

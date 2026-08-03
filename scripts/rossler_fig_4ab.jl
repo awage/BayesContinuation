@@ -11,7 +11,7 @@ curve at a fraction of its cost, and the point of (b) is where it decided to spe
 """
 
 using DrWatson
-@quickactivate "BayesContinuation"
+@quickactivate "BayesianBasinTracking"
 if !isdefined(Main, :rossler_Ksweep)
     include(scriptsdir("rossler_K_sweep_helper.jl"))
 end

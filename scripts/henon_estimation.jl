@@ -35,10 +35,10 @@ using DrWatson
 @quickactivate
 using CairoMakie
 using Statistics
+using SpecialFunctions
 using Attractors
 # include(srcdir("compute.jl"))
-include(srcdir("BayesContinuation.jl"))
-using .BayesContinuation
+include(srcdir("inference_stuff.jl"))
 
 function henon_rule(u, p, n) # here `n` is "time", but we don't use it.
     x, y = u # system state

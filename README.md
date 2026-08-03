@@ -1,9 +1,9 @@
-# BayesContinuation
+# BayesianBasinTracking
 
 This code base is using the [Julia Language](https://julialang.org/) and
 [DrWatson](https://juliadynamics.github.io/DrWatson.jl/stable/)
 to make a reproducible scientific project named
-> BayesContinuation
+> BayesianBasinTracking
 
 To (locally) reproduce this project, do the following:
 
@@ -23,6 +23,6 @@ everything should work out of the box, including correctly finding local paths.
 You may notice that most scripts start with the commands:
 ```julia
 using DrWatson
-@quickactivate "BayesContinuation"
+@quickactivate "BayesianBasinTracking"
 ```
 which auto-activate the project and enable local path handling from DrWatson.

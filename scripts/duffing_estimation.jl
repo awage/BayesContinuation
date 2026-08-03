@@ -31,15 +31,15 @@ unchanged, and `ω` is now an ordinary parameter that `set_parameters!` can move
 """
 
 using DrWatson
-@quickactivate "BayesContinuation"
+@quickactivate "BayesianBasinTracking"
 using LinearAlgebra
 using OrdinaryDiffEq: Vern9
 using Statistics
 using StaticArrays
+using SpecialFunctions
 using Attractors
 
-include(srcdir("BayesContinuation.jl"))
-using .BayesContinuation
+include(srcdir("inference_stuff.jl"))
 
 # Duffing in rescaled time `s = ω t`; see the docstring. p = [d, F, ω].
 @inline @inbounds function duffing_rescaled(u, p, s)

@@ -4,6 +4,14 @@ inference_stuff.jl
 Estimators over the Dirichlet posteriors that `Attractors.BayesianUpdateSampler`
 maintains, one per box of its tiling.
 
+`include(srcdir("inference_stuff.jl"))` this file into a script; it defines plain
+functions in the script's own namespace and needs `SpecialFunctions` (digamma,
+trigamma) and `Attractors` to be loaded first. The typical use is
+
+    sampler = BayesianUpdateSampler(region, n_tiles; sparse_n, history = true)
+    fractions, attractors = global_continuation(RecurrencesFindAndMatch(bmap), pcurve, sampler)
+    est = bayes_estimates(sampler)   # mean_S, var_S, min_eta, n_panics, volumes, ...
+
 The sampler keeps those posteriors in `sampler.alphas :: Vector{Dict{Int, Float64}}`:
 `alphas[i][k]` is the pseudo-count box `i` assigns to attractor `k`, so
 `alphas[i][k] / Σ alphas[i]` is that box's estimate of the fraction of itself that

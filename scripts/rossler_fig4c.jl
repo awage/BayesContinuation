@@ -11,7 +11,7 @@ this one second and it is mostly a load.
 """
 
 using DrWatson
-@quickactivate "BayesContinuation"
+@quickactivate "BayesianBasinTracking"
 if !isdefined(Main, :rossler_Ksweep)
     include(scriptsdir("rossler_K_sweep_helper.jl"))
 end
