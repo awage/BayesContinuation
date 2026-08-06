@@ -8,25 +8,12 @@ two sweeps over the coupling `K` at fixed rewiring probability `p`.
     ẏᵢ =  xᵢ + a yᵢ
     żᵢ =  b  + zᵢ(xᵢ − c)
 
-`rossler_Ksweep` runs one `global_continuation` per network realisation, monitored by a
-`BayesianUpdateSampler`, and averages the estimators over the realisations.
-`rossler_Ksweep_montecarlo` is the brute-force reference for the same curve: a fixed,
-large sample of initial conditions at every `K`, no monitoring and no priors.
 
 ## The basin map is binary
 
 There are no attractors to find here, and no reason to find them: the question is
 whether a trajectory synchronizes, which is one bit per initial condition. So
 `RosslerSyncMap` integrates for a fixed time, measures the Golomb–Rinzel coherence, and
-returns `1` (synchronous) or `-1` (not). `extract_attractors` returns nothing, which is
-also what makes the IDs safe in a continuation: with no sets to compare there is no
-matching, and `1` means synchrony at every `K` by construction.
-
-Sweeping `K` is then an ordinary continuation — `RosslerParams` is mutable, so the
-`pcurve` hands `set_parameters!` a new `K` at each step of one long-lived system. The
-interval swept is the MSF prediction `Iₛ = (α₁/λ_min, α₂/λ_max)`, where the synchronous
-state is linearly stable; how much of state space actually reaches it is what the sweep
-measures.
 """
 
 using DrWatson
@@ -54,7 +41,6 @@ const MSF_Rmax = MSF_α2 / MSF_α1    # ≈ 37.85
 # Rössler network ODE
 # ============================================================================
 
-# mutable: `set_parameters!` swaps `K` at every step of the continuation
 mutable struct RosslerParams
     N::Int
     a::Float64
@@ -91,9 +77,6 @@ function golomb_rinzel_coherence(X)
     return var(vec(mean(X; dims = 2))) / mean_var_i
 end
 
-# ============================================================================
-# The basin map: binary, `1` = synchronous, `-1` = not
-# ============================================================================
 
 struct RosslerSyncMap{DS <: DynamicalSystem} <: BasinMap
     ds::DS
@@ -116,9 +99,6 @@ function (bmap::RosslerSyncMap)(u0)
     return (isnan(R) || R ≤ bmap.r_thresh) ? -1 : 1
 end
 
-# No attractors: the two IDs come from the threshold, not from any set in state space.
-# This is what makes the map safe in a continuation — nothing to match, and nothing that
-# should be matched, since `1` means the same thing at every parameter.
 Attractors._extract_attractors(::RosslerSyncMap) = Dict{Int, StateSpaceSet}()
 Attractors.reset_mapper!(::RosslerSyncMap) = nothing
 
@@ -138,10 +118,6 @@ global_region(N) = Tuple(vcat(
     [( -8.0, 35.0) for _ in 1:N],
 ))
 
-# ============================================================================
-# Network: the WS graph, and the MSF interval to sweep `K` over
-# ============================================================================
-
 """
 Laplacian of the WS graph at rewiring probability `p_val`, and the `K` range spanning its
 MSF interval `Iₛ`. Returns `nothing` if the network cannot synchronize at any `K`.
@@ -157,9 +133,6 @@ function get_network_and_coupling(N, k_deg, p_val, graph_seed, n_K_steps)
     return L, range(K_lo, K_hi; length = n_K_steps)
 end
 
-# ============================================================================
-# One monitored sweep over `K`, on one network
-# ============================================================================
 
 function ksweep_once(L, K_range, N, a, b, c, r_thresh, T_transient, T_measure,
                      sparse_n, dense_n, n_tiles, λ, β)
@@ -194,9 +167,7 @@ function average_dict_series(series)
     end
 end
 
-# ============================================================================
 # Computation functions (wrapped for produce_or_load)
-# ============================================================================
 
 function rossler_Ksweep(d)
     @unpack N_osc, k_degree, graph_seed, n_avg, p_val, n_K_steps,

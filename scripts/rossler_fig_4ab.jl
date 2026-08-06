@@ -4,10 +4,6 @@ rossler_fig_4ab.jl
 Figure 4a — the basin of synchrony `B_S(K)` of the Rössler network at fixed `p`, measured
 twice: by brute-force Monte Carlo, and by a single monitored `global_continuation`.
 Figure 4b — the alarm `η(K)` that the monitored run raises along the way.
-
-Both come out of `rossler_K_sweep_helper.jl`; see its docstring for the binary basin map
-and the sweep. The point of (a) is that the Bayesian estimate follows the Monte Carlo
-curve at a fraction of its cost, and the point of (b) is where it decided to spend it.
 """
 
 using DrWatson

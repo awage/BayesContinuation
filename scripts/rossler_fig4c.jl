@@ -3,11 +3,6 @@ rossler_fig4c.jl
 ================
 Figure 4c — the basin of synchrony of the Rössler network averaged over its MSF interval,
 `⟨B_S⟩_K`, as a function of the rewiring probability `p`, with an exponential fit.
-
-One monitored `K` sweep per `p` (averaged over `n_avg` network realisations) comes from
-`rossler_K_sweep_helper.jl`; see its docstring for the binary basin map and the sweep.
-Every `p` reuses the `.jld2` that `rossler_fig_4ab.jl` produces for its own `p`, so run
-this one second and it is mostly a load.
 """
 
 using DrWatson

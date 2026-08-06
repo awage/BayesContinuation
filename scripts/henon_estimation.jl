@@ -1,34 +1,5 @@
 """
-henon_estimation.jl
-===================
 Reference example for the Bayesian basin monitoring, on the Hénon map
-
-    x' = a - x² + b y
-    y' = x
-
-sweeping `a` over [1.0, 2.0] at fixed `b = -0.3`.
-
-This is the template the other sweep scripts should follow, and it is deliberately
-short: the continuation is a plain `Attractors.global_continuation`, and the whole of
-this package's contribution is the `bayes_estimates(sampler)` line that reads the
-figures off the history the sampler kept along the way.
-
-Compared to the old `estimate_entropy` interface, four things are gone and nothing
-replaces them:
-
-  * the `MapperFactory` closure that rebuilt a mapper at every parameter — the
-    continuation sets the parameters on a single `BasinMapRecurrences` and calls
-    `reset_mapper!` itself;
-  * the seeding of the new mapper from the previous attractors — step 1 of
-    `AttractorSeedContinueMatch`;
-  * the `matching_map!` call that kept the attractor IDs stable — the continuation
-    loop matches each parameter against the previous one before the sampler ever
-    sees a label, so the priors are automatically comparable across the sweep;
-  * the sweep loop itself.
-
-What the script has to provide is the basin map, the sampler, and the parameter
-curve. Note `pcurve` is a vector of `index => value` dictionaries, which is how a
-global continuation names parameters; here index 1 is `a` and index 2 is `b`.
 """
 
 using DrWatson
@@ -41,16 +12,12 @@ using Attractors
 include(srcdir("inference_stuff.jl"))
 
 function henon_rule(u, p, n) # here `n` is "time", but we don't use it.
-    x, y = u # system state
-    a, b = p # system parameters
+    x, y = u ;  a, b = p 
     xn = a - x^2 + b*y
     yn = x
     return SVector(xn, yn)
 end
 
-# One basin map for the whole sweep; the continuation re-parameterises and resets it.
-# Both continuations below build it exactly the same way, so that the only difference
-# between them is the initial condition sampler.
 function henon_basin_map(a0, b)
     ds = DeterministicIteratedMap(henon_rule, [0.0, 0.0], [a0, b])
     grid_rec = (range(-4, 4; length = 1000), range(-4, 4; length = 1000))
@@ -66,8 +33,6 @@ function henon_bayes_continuation(d)
 
     bmap = henon_basin_map(first(a_range), b)
 
-    # `history = true` is what makes the estimators recoverable afterwards: without it
-    # the sampler overwrites `alphas` and `etas` at every parameter.
     sampler = BayesianUpdateSampler(global_bounds, n_tiles;
         sparse_n, dense_n, λ, β, seed = 20260802, history = true,
     )
@@ -88,12 +53,6 @@ function henon_bayes_continuation(d)
     )
 end
 
-# The same continuation with the *vanilla* sampler: `n_ics` initial conditions drawn
-# uniformly over the whole region at every parameter, no boxes, no priors, no
-# re-sampling. This is what `global_continuation` does on its own, and it is the
-# reference the Bayesian run has to be compared against: it estimates the same basin
-# fractions, it just cannot say where in the region they changed, and it spends its
-# whole budget at every parameter whether anything moved or not.
 function henon_vanilla_continuation(d)
     @unpack a_range, b, n_ics, global_bounds = d
 
@@ -196,11 +155,7 @@ save(plotsdir("fig2.png"), fig)
 # ----------------------------------------------------------------------------------------
 # Comparison with the vanilla continuation
 # ----------------------------------------------------------------------------------------
-# Equal budget per parameter: one sparse round of the Bayesian sampler is `sparse_n`
-# points in each of the `n_tiles^2` boxes. The Bayesian run spends more than this at the
-# parameters where a box panics (`dense_n` extra points per flagged box, panel (b) above),
-# and the same everywhere else.
-n_ics = n_tiles^2 * sparse_n
+n_ics = n_tiles^2 * dense_n
 
 params_vanilla = @strdict a_range b n_ics global_bounds
 
@@ -209,7 +164,7 @@ data_vanilla, file_vanilla = produce_or_load(
     params_vanilla,
     henon_vanilla_continuation;
     prefix = "henon_vanilla", storepatch = false,
-    suffix = "jld2", force = true,
+    suffix = "jld2", force = false,
     filename = hash
 )
 
